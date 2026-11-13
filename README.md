@@ -2,8 +2,8 @@
 
 > **Research Question:** Does the decoding method change when an uncertainty-triggered RAG system decides to retrieve, and does it change answer quality at the same retrieval rate?
 >
-> **Author:** Khushi Shukla  
-> **Target:** ARR Deadline (4 Jan 2027)
+  
+
 
 ---
 
@@ -25,7 +25,7 @@ token_retrieval/
 
 ---
 
-## 2. Quickstart: Day-1 Smoke Test
+## 2. Quickstart:Smoke Test
 
 Run the verification test:
 ```bash
