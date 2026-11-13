@@ -1,6 +1,6 @@
 """
 Core uncertainty metrics and trigger calculations for uncertainty-triggered RAG.
-Based on Hashimoto et al. and DRAGIN / FLARE formulations.
+Based on Hashimoto et al. (EMNLP Findings 2025) and DRAGIN / FLARE formulations.
 """
 
 import math
@@ -16,19 +16,24 @@ from typing import List, Dict, Any, Union
 # 1. Per-Token Uncertainty Functions
 # ==========================================
 
-def compute_entropy_from_logits(logits: torch.Tensor) -> float:
+def compute_entropy_from_logits(logits: torch.Tensor, unit: str = "nats") -> float:
     """
-    Computes Shannon entropy (base e) of next-token distribution:
+    Computes Shannon entropy of next-token distribution:
     H(P) = - sum(P * log P)
     Calculated in log-space for numerical stability.
+    unit: 'nats' (base e) or 'bits' (base 2).
     """
     if logits.dim() == 1:
         logits = logits.unsqueeze(0)
     log_probs = F.log_softmax(logits, dim=-1)
     probs = torch.exp(log_probs)
-    # Avoid 0 * log(0) NaN by masking
-    entropy = -torch.sum(probs * log_probs, dim=-1)
-    return entropy.item()
+    # Mask to prevent 0 * -inf = NaN
+    mask = probs > 0
+    entropy = -torch.sum(torch.where(mask, probs * log_probs, torch.zeros_like(probs)), dim=-1).item()
+    
+    if unit == "bits":
+        entropy = entropy / math.log(2.0)
+    return entropy
 
 
 def compute_token_log_prob(logits: torch.Tensor, token_id: int) -> float:
@@ -96,7 +101,7 @@ def trigger_mean_nll(token_log_probs: List[float], tau: float) -> bool:
 
 
 # ==========================================
-# 3. QA Evaluation Metrics (F1, EM, Copy Rate)
+# 3. QA Evaluation Metrics (F1, EM, Rouge-L, Copy Rate)
 # ==========================================
 
 def normalize_answer(s: str) -> str:
@@ -145,10 +150,49 @@ def compute_f1(prediction: str, ground_truths: List[str]) -> float:
     return max_f1
 
 
+def _lcs(x: List[str], y: List[str]) -> int:
+    """Longest common subsequence length between token lists x and y."""
+    m, n = len(x), len(y)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m):
+        for j in range(n):
+            if x[i] == y[j]:
+                dp[i + 1][j + 1] = dp[i][j] + 1
+            else:
+                dp[i + 1][j + 1] = max(dp[i + 1][j], dp[i][j + 1])
+    return dp[m][n]
+
+
+def compute_rouge_l(prediction: str, ground_truths: List[str]) -> float:
+    """
+    Computes Rouge-L F1 (LCS-based) matching Hashimoto et al. quality score.
+    Returns value between 0.0 and 1.0.
+    """
+    pred_tokens = normalize_answer(prediction).split()
+    if not pred_tokens:
+        return 0.0
+
+    max_rouge = 0.0
+    for gt in ground_truths:
+        gt_tokens = normalize_answer(gt).split()
+        if not gt_tokens:
+            continue
+        lcs_len = _lcs(pred_tokens, gt_tokens)
+        if lcs_len == 0:
+            continue
+        prec = lcs_len / len(pred_tokens)
+        rec = lcs_len / len(gt_tokens)
+        f1 = (2 * prec * rec) / (prec + rec)
+        if f1 > max_rouge:
+            max_rouge = f1
+
+    return max_rouge
+
+
 def compute_copy_rate(generated_text: str, context_text: str, n: int = 3) -> float:
     """
     Measures n-gram overlap between generated text and retrieved passages.
-    Tests whether contrastive search penalizes copying from context.
+    Tests whether contrastive search penalizes copying from context (RQ1c).
     """
     def get_ngrams(tokens, n_val):
         return [tuple(tokens[i:i + n_val]) for i in range(len(tokens) - n_val + 1)]
@@ -170,16 +214,24 @@ def compute_copy_rate(generated_text: str, context_text: str, n: int = 3) -> flo
 # 4. Calibration & UQ Metrics (AUROC, PRR)
 # ==========================================
 
-def compute_prr(uncertainty_scores: List[float], correctness: List[int], steps: int = 100) -> float:
+def compute_prr(
+    uncertainty_scores: List[float],
+    quality_scores: List[float],
+    steps: int = 100,
+    scale_100: bool = True
+) -> float:
     """
-    Prediction Rejection Ratio (PRR) as used in Hashimoto et al.
-    Measures how much accuracy improves as we reject questions with highest uncertainty.
-    Higher is better.
+    Prediction Rejection Ratio (PRR) as defined in Hashimoto et al. (EMNLP Findings 2025).
+    Measures how much average quality improves as high-uncertainty answers are rejected.
+    
+    uncertainty_scores: Higher means MORE uncertain.
+    quality_scores: Higher means BETTER quality (e.g., Rouge-L or binary accuracy in [0, 1]).
+    scale_100: If True, multiplies PRR by 100 to match Hashimoto's published scale.
     """
     scores = np.array(uncertainty_scores)
-    labels = np.array(correctness)
+    labels = np.array(quality_scores)
 
-    # Sort ascending by uncertainty (most certain first)
+    # Sort ascending by uncertainty (most confident answers retained first)
     sorted_indices = np.argsort(scores)
     sorted_labels = labels[sorted_indices]
 
@@ -190,17 +242,21 @@ def compute_prr(uncertainty_scores: List[float], correctness: List[int], steps: 
         k = max(1, int(len(sorted_labels) * frac))
         accuracies.append(np.mean(sorted_labels[:k]))
 
-    # Area under the accuracy-retention curve relative to baseline
-    baseline_acc = np.mean(labels)
-    
-    # NumPy 2.0+ compatibility (trapz was renamed to trapezoid in NumPy 2.0)
+    baseline_quality = float(np.mean(labels))
+
+    # Numerical integration across retention curve
     if hasattr(np, "trapezoid"):
         area = np.trapezoid(accuracies, retention_fractions)
     elif hasattr(np, "trapz"):
         area = np.trapz(accuracies, retention_fractions)
     else:
-        area = sum((accuracies[i] + accuracies[i+1]) * (retention_fractions[i+1] - retention_fractions[i]) / 2.0 for i in range(len(accuracies)-1))
+        area = sum(
+            (accuracies[i] + accuracies[i+1]) * (retention_fractions[i+1] - retention_fractions[i]) / 2.0
+            for i in range(len(accuracies)-1)
+        )
 
-    prr = area - (baseline_acc * 0.9)
+    # Area under retention curve relative to baseline
+    prr = area - (baseline_quality * 0.9)
+    if scale_100:
+        prr = prr * 100.0
     return float(prr)
-
