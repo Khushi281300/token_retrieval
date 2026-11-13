@@ -154,3 +154,4 @@ class RAGPipeline:
             raise ValueError(f"Unknown trigger_type: {self.trigger_type}")
 
         return round(tau, 4)
+

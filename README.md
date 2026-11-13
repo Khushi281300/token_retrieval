@@ -36,3 +36,4 @@ This produces `runs/smoke_test.json`, confirming:
 2. Raw logits and decoder-processed scores are simultaneously tracked per token.
 3. Next-token entropy $H(P_t)$ and log-probability $\log P(w_t)$ are calculated in log-space.
 4. Offline triggers (Min-Prob, Max-Entropy, Mean-NLL) are validated.
+

@@ -118,3 +118,4 @@ class ElasticsearchDPRRetriever(BaseRetriever):
                 "score": round(hit.get("_score", 0.0), 4)
             })
         return results
+

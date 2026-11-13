@@ -57,3 +57,4 @@
 - **Seeds:** 3 seeds for stochastic decoders (seeds 42, 43, 44). Seed variance reported separately from question variance.
 - **Statistical Significance:** Paired bootstrap sampling over questions ($B=1000$, 95% bootstrap confidence intervals) with Holm-Bonferroni correction.
 - **Equivalence Margin:** Defined from dev-set seed-to-seed variability in pilot runs. A decoder is declared to "have an effect" if and only if its 95% confidence interval strictly excludes zero and exceeds the equivalence margin at matched retrieval rate.
+
