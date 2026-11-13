@@ -1,0 +1,11 @@
+{
+  "run_name": "contrastive_search_alpha_0.6",
+  "decoder_type": "contrastive_search",
+  "penalty_alpha": 0.6,
+  "top_k": 4,
+  "max_draft_tokens": 32,
+  "max_answer_tokens": 32,
+  "trigger_type": "max_entropy",
+  "tau_dev": 2.0,
+  "seed": 42
+}

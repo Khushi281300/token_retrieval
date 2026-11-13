@@ -1,0 +1,12 @@
+{
+  "run_name": "beam_search_5",
+  "decoder_type": "beam_search",
+  "num_beams": 5,
+  "early_stopping": true,
+  "do_sample": false,
+  "max_draft_tokens": 32,
+  "max_answer_tokens": 32,
+  "trigger_type": "max_entropy",
+  "tau_dev": 2.0,
+  "seed": 42
+}

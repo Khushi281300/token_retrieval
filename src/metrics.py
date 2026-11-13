@@ -194,3 +194,4 @@ def compute_prr(uncertainty_scores: List[float], correctness: List[int], steps: 
     baseline_acc = np.mean(labels)
     prr = np.trapz(accuracies, retention_fractions) - (baseline_acc * 0.9)
     return float(prr)
+
