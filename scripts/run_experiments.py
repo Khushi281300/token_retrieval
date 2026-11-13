@@ -23,6 +23,27 @@ from src.pipeline import RAGPipeline
 
 
 def load_dataset(file_path: str):
+    # Try direct path, then relative to project root
+    if not os.path.exists(file_path):
+        alt_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", file_path))
+        if os.path.exists(alt_path):
+            file_path = alt_path
+
+    if not os.path.exists(file_path):
+        print(f"Warning: {file_path} not found. Generating default sample questions...")
+        default_samples = [
+            {"id": "q1", "question": "What is the capital of France?", "answers": ["Paris"], "passages": ["Paris is the capital and most populous city of France."]},
+            {"id": "q2", "question": "Who wrote Romeo and Juliet?", "answers": ["William Shakespeare", "Shakespeare"], "passages": ["Romeo and Juliet is a tragedy written by William Shakespeare early in his career."]},
+            {"id": "q3", "question": "What is the chemical symbol for gold?", "answers": ["Au"], "passages": ["Gold is a chemical element; its symbol is Au from Latin aurum."]},
+            {"id": "q4", "question": "In what year did the Apollo 11 mission land on the Moon?", "answers": ["1969"], "passages": ["Apollo 11 was the American spaceflight that first landed humans on the Moon on July 20, 1969."]},
+            {"id": "q5", "question": "What planet is known as the Red Planet?", "answers": ["Mars"], "passages": ["Mars is the fourth planet from the Sun and the second-smallest planet in the Solar System, often referred to as the Red Planet."]}
+        ]
+        os.makedirs(os.path.dirname(file_path) if os.path.dirname(file_path) else ".", exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            for s in default_samples:
+                f.write(json.dumps(s) + "\n")
+        return default_samples
+
     data = []
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:

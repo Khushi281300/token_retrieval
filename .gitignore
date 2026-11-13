@@ -10,7 +10,9 @@ build/
 runs/*.json
 !runs/smoke_test.json
 data/*.jsonl
+!data/sample_*.jsonl
 data/*.json
+!data/sample_*.json
 data/indices/
 repos/
 

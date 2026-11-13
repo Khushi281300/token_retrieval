@@ -37,3 +37,4 @@
 3. **Dual Scoring Mechanism (Confirmed):**
    - Hugging Face `output_logits=True` returns raw forward-pass distributions.
    - `output_scores=True` returns decoder-modified scores. Both are successfully extracted by `DecoderEngine`.
+

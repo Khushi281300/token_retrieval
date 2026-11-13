@@ -7,6 +7,8 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Khushi281300/token_retrieval/blob/main/notebooks/01_colab_reproduce_and_eval.ipynb)
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Khushi281300/token_retrieval/blob/main/notebooks/01_colab_reproduce_and_eval.ipynb)
+
 ---
 
 ## 1. Directory Structure

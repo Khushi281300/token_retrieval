@@ -192,6 +192,15 @@ def compute_prr(uncertainty_scores: List[float], correctness: List[int], steps: 
 
     # Area under the accuracy-retention curve relative to baseline
     baseline_acc = np.mean(labels)
-    prr = np.trapz(accuracies, retention_fractions) - (baseline_acc * 0.9)
+    
+    # NumPy 2.0+ compatibility (trapz was renamed to trapezoid in NumPy 2.0)
+    if hasattr(np, "trapezoid"):
+        area = np.trapezoid(accuracies, retention_fractions)
+    elif hasattr(np, "trapz"):
+        area = np.trapz(accuracies, retention_fractions)
+    else:
+        area = sum((accuracies[i] + accuracies[i+1]) * (retention_fractions[i+1] - retention_fractions[i]) / 2.0 for i in range(len(accuracies)-1))
+
+    prr = area - (baseline_acc * 0.9)
     return float(prr)
 
