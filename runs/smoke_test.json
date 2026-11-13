@@ -1,0 +1,368 @@
+{
+  "metadata": {
+    "timestamp": "2026-11-13 21:55:25",
+    "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "device": "cpu",
+    "transformers_version": "5.6.2",
+    "torch_version": "2.14.0+cpu",
+    "platform": "Windows-11-10.0.26300-SP0"
+  },
+  "prompt": "The capital of France is",
+  "generated_text": "Paris.\n\n2. B. The capital of Germany is Berlin.\n\n3. C",
+  "full_text": "The capital of France is Paris.\n\n2. B. The capital of Germany is Berlin.\n\n3. C",
+  "num_generated_tokens": 20,
+  "per_token_analysis": [
+    {
+      "step": 0,
+      "token_id": 3681,
+      "token_str": "Paris",
+      "raw": {
+        "log_prob": -0.6754,
+        "prob": 0.509,
+        "entropy": 2.5121,
+        "msp": 0.509
+      },
+      "processed": {
+        "log_prob": -0.6754,
+        "prob": 0.509,
+        "entropy": 2.5121,
+        "msp": 0.509
+      }
+    },
+    {
+      "step": 1,
+      "token_id": 29889,
+      "token_str": ".",
+      "raw": {
+        "log_prob": -0.8678,
+        "prob": 0.4199,
+        "entropy": 1.8943,
+        "msp": 0.4199
+      },
+      "processed": {
+        "log_prob": -0.8678,
+        "prob": 0.4199,
+        "entropy": 1.8943,
+        "msp": 0.4199
+      }
+    },
+    {
+      "step": 2,
+      "token_id": 13,
+      "token_str": "\n",
+      "raw": {
+        "log_prob": -1.6704,
+        "prob": 0.1882,
+        "entropy": 3.6568,
+        "msp": 0.1882
+      },
+      "processed": {
+        "log_prob": -1.6704,
+        "prob": 0.1882,
+        "entropy": 3.6568,
+        "msp": 0.1882
+      }
+    },
+    {
+      "step": 3,
+      "token_id": 13,
+      "token_str": "\n",
+      "raw": {
+        "log_prob": -0.9501,
+        "prob": 0.3867,
+        "entropy": 3.3113,
+        "msp": 0.3867
+      },
+      "processed": {
+        "log_prob": -0.9501,
+        "prob": 0.3867,
+        "entropy": 3.3113,
+        "msp": 0.3867
+      }
+    },
+    {
+      "step": 4,
+      "token_id": 29906,
+      "token_str": "2",
+      "raw": {
+        "log_prob": -1.7373,
+        "prob": 0.176,
+        "entropy": 3.8423,
+        "msp": 0.176
+      },
+      "processed": {
+        "log_prob": -1.7373,
+        "prob": 0.176,
+        "entropy": 3.8423,
+        "msp": 0.176
+      }
+    },
+    {
+      "step": 5,
+      "token_id": 29889,
+      "token_str": ".",
+      "raw": {
+        "log_prob": -0.1163,
+        "prob": 0.8902,
+        "entropy": 0.7303,
+        "msp": 0.8902
+      },
+      "processed": {
+        "log_prob": -0.1163,
+        "prob": 0.8902,
+        "entropy": 0.7303,
+        "msp": 0.8902
+      }
+    },
+    {
+      "step": 6,
+      "token_id": 350,
+      "token_str": "B",
+      "raw": {
+        "log_prob": -2.4623,
+        "prob": 0.0852,
+        "entropy": 5.7103,
+        "msp": 0.0852
+      },
+      "processed": {
+        "log_prob": -2.4623,
+        "prob": 0.0852,
+        "entropy": 5.7103,
+        "msp": 0.0852
+      }
+    },
+    {
+      "step": 7,
+      "token_id": 29889,
+      "token_str": ".",
+      "raw": {
+        "log_prob": -1.6975,
+        "prob": 0.1831,
+        "entropy": 4.7392,
+        "msp": 0.1831
+      },
+      "processed": {
+        "log_prob": -1.6975,
+        "prob": 0.1831,
+        "entropy": 4.7392,
+        "msp": 0.1831
+      }
+    },
+    {
+      "step": 8,
+      "token_id": 450,
+      "token_str": "The",
+      "raw": {
+        "log_prob": -2.0811,
+        "prob": 0.1248,
+        "entropy": 5.1398,
+        "msp": 0.1248
+      },
+      "processed": {
+        "log_prob": -2.0811,
+        "prob": 0.1248,
+        "entropy": 5.1398,
+        "msp": 0.1248
+      }
+    },
+    {
+      "step": 9,
+      "token_id": 7483,
+      "token_str": "capital",
+      "raw": {
+        "log_prob": -0.8019,
+        "prob": 0.4485,
+        "entropy": 4.4109,
+        "msp": 0.4485
+      },
+      "processed": {
+        "log_prob": -0.8019,
+        "prob": 0.4485,
+        "entropy": 4.4109,
+        "msp": 0.4485
+      }
+    },
+    {
+      "step": 10,
+      "token_id": 310,
+      "token_str": "of",
+      "raw": {
+        "log_prob": -0.0367,
+        "prob": 0.964,
+        "entropy": 0.2071,
+        "msp": 0.964
+      },
+      "processed": {
+        "log_prob": -0.0367,
+        "prob": 0.964,
+        "entropy": 0.2071,
+        "msp": 0.964
+      }
+    },
+    {
+      "step": 11,
+      "token_id": 9556,
+      "token_str": "Germany",
+      "raw": {
+        "log_prob": -1.9741,
+        "prob": 0.1389,
+        "entropy": 3.4033,
+        "msp": 0.1389
+      },
+      "processed": {
+        "log_prob": -1.9741,
+        "prob": 0.1389,
+        "entropy": 3.4033,
+        "msp": 0.1389
+      }
+    },
+    {
+      "step": 12,
+      "token_id": 338,
+      "token_str": "is",
+      "raw": {
+        "log_prob": -0.0046,
+        "prob": 0.9955,
+        "entropy": 0.0432,
+        "msp": 0.9955
+      },
+      "processed": {
+        "log_prob": -0.0046,
+        "prob": 0.9955,
+        "entropy": 0.0432,
+        "msp": 0.9955
+      }
+    },
+    {
+      "step": 13,
+      "token_id": 5115,
+      "token_str": "Berlin",
+      "raw": {
+        "log_prob": -0.0184,
+        "prob": 0.9817,
+        "entropy": 0.128,
+        "msp": 0.9817
+      },
+      "processed": {
+        "log_prob": -0.0184,
+        "prob": 0.9817,
+        "entropy": 0.128,
+        "msp": 0.9817
+      }
+    },
+    {
+      "step": 14,
+      "token_id": 29889,
+      "token_str": ".",
+      "raw": {
+        "log_prob": -0.0104,
+        "prob": 0.9896,
+        "entropy": 0.0751,
+        "msp": 0.9896
+      },
+      "processed": {
+        "log_prob": -0.0104,
+        "prob": 0.9896,
+        "entropy": 0.0751,
+        "msp": 0.9896
+      }
+    },
+    {
+      "step": 15,
+      "token_id": 13,
+      "token_str": "\n",
+      "raw": {
+        "log_prob": -0.0242,
+        "prob": 0.9761,
+        "entropy": 0.1453,
+        "msp": 0.9761
+      },
+      "processed": {
+        "log_prob": -0.0242,
+        "prob": 0.9761,
+        "entropy": 0.1453,
+        "msp": 0.9761
+      }
+    },
+    {
+      "step": 16,
+      "token_id": 13,
+      "token_str": "\n",
+      "raw": {
+        "log_prob": -0.0106,
+        "prob": 0.9895,
+        "entropy": 0.0677,
+        "msp": 0.9895
+      },
+      "processed": {
+        "log_prob": -0.0106,
+        "prob": 0.9895,
+        "entropy": 0.0677,
+        "msp": 0.9895
+      }
+    },
+    {
+      "step": 17,
+      "token_id": 29941,
+      "token_str": "3",
+      "raw": {
+        "log_prob": -0.1035,
+        "prob": 0.9016,
+        "entropy": 0.7646,
+        "msp": 0.9016
+      },
+      "processed": {
+        "log_prob": -0.1035,
+        "prob": 0.9016,
+        "entropy": 0.7646,
+        "msp": 0.9016
+      }
+    },
+    {
+      "step": 18,
+      "token_id": 29889,
+      "token_str": ".",
+      "raw": {
+        "log_prob": -0.0002,
+        "prob": 0.9998,
+        "entropy": 0.003,
+        "msp": 0.9998
+      },
+      "processed": {
+        "log_prob": -0.0002,
+        "prob": 0.9998,
+        "entropy": 0.003,
+        "msp": 0.9998
+      }
+    },
+    {
+      "step": 19,
+      "token_id": 315,
+      "token_str": "C",
+      "raw": {
+        "log_prob": -0.1679,
+        "prob": 0.8455,
+        "entropy": 0.6341,
+        "msp": 0.8455
+      },
+      "processed": {
+        "log_prob": -0.1679,
+        "prob": 0.8455,
+        "entropy": 0.6341,
+        "msp": 0.8455
+      }
+    }
+  ],
+  "triggers_test": {
+    "raw": {
+      "trigger_min_prob_tau_0.5": true,
+      "trigger_max_entropy_tau_1.5": true,
+      "trigger_mean_nll_tau_1.0": false
+    },
+    "processed": {
+      "trigger_min_prob_tau_0.5": true,
+      "trigger_max_entropy_tau_1.5": true,
+      "trigger_mean_nll_tau_1.0": false
+    }
+  }
+}

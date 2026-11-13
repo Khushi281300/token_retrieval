@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+
+# Ignore massive raw runs and indices
+runs/*.json
+!runs/smoke_test.json
+data/*.jsonl
+data/*.json
+data/indices/
+repos/
