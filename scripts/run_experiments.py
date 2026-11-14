@@ -207,34 +207,55 @@ def run_full_pipeline_experiment(
         for seed in seeds:
             fixed_runs = []
             matched_runs = []
-            for q in test_set:
-                # Run with Fixed tau (Greedy's calibrated threshold)
-                res_fixed = pipeline.run_single_question(
-                    question=q["question"],
-                    ground_truths=q["answers"],
-                    draft_decoder=dec_name,
-                    answer_decoder="greedy", # STRICTLY FIXED TO GREEDY
-                    tau=fixed_tau_greedy,
-                    use_raw=use_raw,
-                    max_draft_tokens=max_draft_tokens,
-                    max_answer_tokens=max_answer_tokens,
-                    seed=seed
-                )
-                fixed_runs.append(res_fixed)
+            tau_m = tuned_tau[dec_name]
 
-                # Run with Matched-Rate tau (Decoder's own calibrated threshold)
-                res_matched = pipeline.run_single_question(
-                    question=q["question"],
-                    ground_truths=q["answers"],
-                    draft_decoder=dec_name,
-                    answer_decoder="greedy", # STRICTLY FIXED TO GREEDY
-                    tau=tuned_tau[dec_name],
-                    use_raw=use_raw,
-                    max_draft_tokens=max_draft_tokens,
-                    max_answer_tokens=max_answer_tokens,
+            for q_idx, q in enumerate(test_set):
+                print(f"  --> [{dec_name.upper()} | Seed {seed or 42}] Evaluating question {q_idx+1}/{len(test_set)}...", end="\r", flush=True)
+                
+                # Step 1: Generate draft ONCE (saves 50% compute)
+                draft_prompt = f"Question: {q['question']}\nDraft Answer:"
+                draft_res = pipeline.decoder_engine.generate(
+                    prompt=draft_prompt,
+                    decoder_type=dec_name,
+                    max_new_tokens=max_draft_tokens,
                     seed=seed
                 )
-                matched_runs.append(res_matched)
+
+                # Step 2: Evaluate triggers for both Fixed tau and Matched tau
+                fixed_fired = pipeline.evaluate_trigger(draft_res, tau=fixed_tau_greedy, use_raw=use_raw)
+                matched_fired = pipeline.evaluate_trigger(draft_res, tau=tau_m, use_raw=use_raw)
+
+                # Step 3: Retrieve if either fired
+                if fixed_fired or matched_fired:
+                    query = f"{q['question']} {draft_res['generated_text']}"
+                    retrieved_passages = pipeline.retriever.retrieve(query=query, top_k=3)
+                    retrieved_text = "\n".join([p["text"] for p in retrieved_passages])
+                    ans_prompt = f"Context:\n{retrieved_text}\n\nQuestion: {q['question']}\nAnswer:"
+                    ans_res = pipeline.decoder_engine.generate(
+                        prompt=ans_prompt,
+                        decoder_type="greedy", # Answer decoder strictly locked to greedy
+                        max_new_tokens=max_answer_tokens,
+                        seed=seed
+                    )
+                    final_ans_retrieved = ans_res["generated_text"]
+                    f1_retrieved = compute_f1(final_ans_retrieved, q["answers"])
+                    em_retrieved = compute_exact_match(final_ans_retrieved, q["answers"])
+                else:
+                    final_ans_retrieved = draft_res["generated_text"]
+                    f1_retrieved = compute_f1(final_ans_retrieved, q["answers"])
+                    em_retrieved = compute_exact_match(final_ans_retrieved, q["answers"])
+
+                # Fixed tau record
+                f1_fixed = f1_retrieved if fixed_fired else compute_f1(draft_res["generated_text"], q["answers"])
+                em_fixed = em_retrieved if fixed_fired else compute_exact_match(draft_res["generated_text"], q["answers"])
+                fixed_runs.append({"retrieval_fired": fixed_fired, "f1": f1_fixed, "em": em_fixed})
+
+                # Matched tau record
+                f1_matched = f1_retrieved if matched_fired else compute_f1(draft_res["generated_text"], q["answers"])
+                em_matched = em_retrieved if matched_fired else compute_exact_match(draft_res["generated_text"], q["answers"])
+                matched_runs.append({"retrieval_fired": matched_fired, "f1": f1_matched, "em": em_matched})
+
+            print(f"  [DONE] Completed test evaluation for {dec_name.upper()} (Seed {seed or 42}).")
 
             total = len(fixed_runs)
             fixed_rate_list.append(sum(1 for r in fixed_runs if r["retrieval_fired"]) / total)
