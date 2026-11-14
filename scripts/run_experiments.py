@@ -157,10 +157,23 @@ def run_full_pipeline_experiment(
 
     model_kwargs = {"device_map": "auto" if device == "cuda" else None}
     if load_in_4bit:
-        model_kwargs["load_in_4bit"] = True
+        try:
+            from transformers import BitsAndBytesConfig
+            compute_dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True
+            )
+            print(f"Configured 4-bit quantization with BitsAndBytesConfig (compute_dtype={compute_dtype}).")
+        except Exception as e:
+            print(f"Warning: BitsAndBytesConfig setup failed ({e}). Loading in standard precision.")
+            dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else (torch.float16 if device == "cuda" else torch.float32)
+            model_kwargs["torch_dtype"] = dtype
     else:
         dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else (torch.float16 if device == "cuda" else torch.float32)
-        model_kwargs["dtype"] = dtype
+        model_kwargs["torch_dtype"] = dtype
 
     print(f"Loading model weights for {model_name}...")
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
