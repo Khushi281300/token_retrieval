@@ -1,0 +1,96 @@
+{
+  "metadata": {
+    "timestamp": "20261114_112333",
+    "model_name": "allenai/OLMo-2-1124-7B-Instruct",
+    "score_type": "raw",
+    "entropy_unit": "nats",
+    "target_retrieval_rate": 0.40,
+    "num_dev_questions": 25,
+    "num_test_questions": 25,
+    "fixed_tau_greedy": 3.3722
+  },
+  "table1_fixed_threshold": {
+    "greedy": {
+      "retrieval_rate": 0.280,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.4261,
+      "f1_std": 0.0,
+      "em": 0.2400,
+      "em_std": 0.0
+    },
+    "beam_search": {
+      "retrieval_rate": 0.360,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.4582,
+      "f1_std": 0.0,
+      "em": 0.3200,
+      "em_std": 0.0
+    },
+    "contrastive_search": {
+      "retrieval_rate": 0.440,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.5419,
+      "f1_std": 0.0,
+      "em": 0.4000,
+      "em_std": 0.0
+    },
+    "nucleus_sampling": {
+      "retrieval_rate": 0.307,
+      "retrieval_rate_std": 0.038,
+      "f1": 0.3915,
+      "f1_std": 0.0433,
+      "em": 0.2267,
+      "em_std": 0.0499
+    }
+  },
+  "table2_matched_rate": {
+    "greedy": {
+      "tau_matched": 3.3722,
+      "retrieval_rate": 0.280,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.4261,
+      "f1_std": 0.0,
+      "em": 0.2400,
+      "em_std": 0.0
+    },
+    "beam_search": {
+      "tau_matched": 3.3133,
+      "retrieval_rate": 0.440,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.4943,
+      "f1_std": 0.0,
+      "em": 0.3600,
+      "em_std": 0.0
+    },
+    "contrastive_search": {
+      "tau_matched": 3.3437,
+      "retrieval_rate": 0.440,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.5419,
+      "f1_std": 0.0,
+      "em": 0.4000,
+      "em_std": 0.0
+    },
+    "nucleus_sampling": {
+      "tau_matched": 3.5281,
+      "retrieval_rate": 0.293,
+      "retrieval_rate_std": 0.050,
+      "f1": 0.3841,
+      "f1_std": 0.0519,
+      "em": 0.2133,
+      "em_std": 0.0680
+    }
+  },
+  "table3_answer_decoder": {
+    "greedy": {
+      "f1": 0.4261,
+      "em": 0.2400,
+      "copy_rate": 0.3297
+    },
+    "contrastive_search": {
+      "f1": 0.3987,
+      "em": 0.2000,
+      "copy_rate": 0.2496
+    }
+  }
+}
