@@ -211,8 +211,74 @@ def compute_copy_rate(generated_text: str, context_text: str, n: int = 3) -> flo
 
 
 # ==========================================
-# 4. Calibration & UQ Metrics (AUROC, PRR)
+# 4. Calibration & UQ Metrics (AUROC, PRR, Cohen's Kappa, Bootstrap CI)
 # ==========================================
+
+def compute_cohen_kappa(decisions_a: List[Union[bool, int]], decisions_b: List[Union[bool, int]]) -> float:
+    """
+    Computes Cohen's kappa agreement between two binary decision vectors.
+    Used to quantify per-question retrieval trigger agreement between Greedy
+    and alternative decoders at matched retrieval rates.
+    """
+    assert len(decisions_a) == len(decisions_b), "Decisions lists must have the same length"
+    if not decisions_a:
+        return 1.0
+
+    a = np.array(decisions_a, dtype=int)
+    b = np.array(decisions_b, dtype=int)
+    n = len(a)
+
+    po = float(np.mean(a == b))
+
+    p_a1 = float(np.mean(a == 1))
+    p_a0 = 1.0 - p_a1
+    p_b1 = float(np.mean(b == 1))
+    p_b0 = 1.0 - p_b1
+
+    pe = (p_a1 * p_b1) + (p_a0 * p_b0)
+
+    if abs(1.0 - pe) < 1e-12:
+        return 1.0
+
+    kappa = (po - pe) / (1.0 - pe)
+    return float(kappa)
+
+
+def bootstrap_threshold_ci(
+    scores: List[float],
+    target_rate: float,
+    num_bootstraps: int = 1000,
+    ci: float = 0.95,
+    seed: int = 42
+) -> Dict[str, float]:
+    """
+    Computes threshold tau at target retrieval rate and its paired bootstrap
+    confidence interval over Dev items.
+    """
+    scores_arr = np.array(scores)
+    n = len(scores_arr)
+    if n == 0:
+        return {"tau": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+
+    pct = (1.0 - target_rate) * 100.0
+    point_tau = float(np.percentile(scores_arr, pct))
+
+    rng = np.random.RandomState(seed)
+    boot_taus = []
+    for _ in range(num_bootstraps):
+        resampled = rng.choice(scores_arr, size=n, replace=True)
+        boot_taus.append(float(np.percentile(resampled, pct)))
+
+    alpha = (1.0 - ci) / 2.0
+    ci_lower = float(np.percentile(boot_taus, alpha * 100.0))
+    ci_upper = float(np.percentile(boot_taus, (1.0 - alpha) * 100.0))
+
+    return {
+        "tau": round(point_tau, 4),
+        "ci_lower": round(ci_lower, 4),
+        "ci_upper": round(ci_upper, 4)
+    }
+
 
 def compute_prr(
     uncertainty_scores: List[float],

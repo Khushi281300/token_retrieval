@@ -20,6 +20,13 @@ from src.metrics import (
     compute_token_prob,
     compute_msp
 )
+from src.scoring import (
+    score_tokens,
+    cut_draft_at_first_newline_or_eos,
+    compute_distinct_n,
+    compute_nucleus_entropy_from_logits
+)
+from src.contrastive import contrastive_search_generate
 
 
 class DecoderEngine:
@@ -38,11 +45,13 @@ class DecoderEngine:
         top_k: int = 4,
         temperature: float = 0.7,
         top_p: float = 0.9,
-        num_beams: int = 5
+        num_beams: int = 5,
+        cut_draft: bool = True
     ) -> Dict[str, Any]:
         """
-        Executes text generation under the specified decoder configuration and
-        returns generated text, raw logits distribution, and processed scores distribution.
+        Executes text generation under the specified decoder configuration.
+        Computes both exact forward-pass raw uncertainty distributions and
+        decoder-processed (adjusted) scores.
         """
         if seed is not None:
             torch.manual_seed(seed)
@@ -94,91 +103,90 @@ class DecoderEngine:
             raise ValueError(f"Unsupported decoder_type: '{decoder_type}'")
 
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, **gen_kwargs)
+            if decoder_type == "contrastive_search":
+                try:
+                    outputs = self.model.generate(**inputs, **gen_kwargs)
+                except Exception as e:
+                    # Fallback to local offline implementation if remote custom_generate cannot be fetched
+                    outputs = contrastive_search_generate(
+                        model=self.model,
+                        input_ids=input_ids,
+                        max_new_tokens=max_new_tokens,
+                        penalty_alpha=penalty_alpha,
+                        top_k=top_k,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id
+                    )
+            else:
+                outputs = self.model.generate(**inputs, **gen_kwargs)
 
-        # In beam search, outputs.sequences contains (batch_size * num_return_sequences, seq_len)
-        # Top beam sequence is at index 0
         generated_sequence = outputs.sequences[0]
         generated_tokens = generated_sequence[prompt_len:]
-        generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        full_generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-        raw_logits_steps = outputs.logits
-        processed_scores_steps = outputs.scores
-        num_steps = len(generated_tokens)
+        # Cut draft at first newline or EOS if requested
+        if cut_draft:
+            effective_text = cut_draft_at_first_newline_or_eos(full_generated_text)
+        else:
+            effective_text = full_generated_text
 
-        token_records = []
-        raw_probs = []
-        raw_entropies = []
-        raw_log_probs = []
-        proc_probs = []
+        # Compute exact forward pass scoring over prompt + effective_text
+        compute_nucleus = (decoder_type == "nucleus_sampling")
+        scored = score_tokens(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            prompt_text=prompt,
+            draft_text=effective_text,
+            device=self.device,
+            compute_nucleus_adjusted=compute_nucleus,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+        # Also extract decoder-processed scores if available
+        processed_scores_steps = getattr(outputs, "scores", None)
         proc_entropies = []
+        proc_probs = []
         proc_log_probs = []
 
-        for step_idx in range(num_steps):
-            tok_id = generated_tokens[step_idx].item()
-            tok_str = self.tokenizer.decode([tok_id])
-
-            # Raw logits for step
-            if step_idx < len(raw_logits_steps):
-                raw_l = raw_logits_steps[step_idx][0].float().cpu()
-                raw_lp = compute_token_log_prob(raw_l, tok_id)
-                raw_p = compute_token_prob(raw_l, tok_id)
-                raw_ent = compute_entropy_from_logits(raw_l)
-                raw_msp = compute_msp(raw_l)
-            else:
-                raw_lp, raw_p, raw_ent, raw_msp = 0.0, 1.0, 0.0, 1.0
-
-            raw_probs.append(raw_p)
-            raw_entropies.append(raw_ent)
-            raw_log_probs.append(raw_lp)
-
-            # Processed scores for step
-            if step_idx < len(processed_scores_steps):
+        if processed_scores_steps:
+            cut_token_count = scored["draft_len"]
+            for step_idx in range(min(cut_token_count, len(processed_scores_steps))):
                 proc_s = processed_scores_steps[step_idx][0].float().cpu()
-                proc_lp = compute_token_log_prob(proc_s, tok_id)
-                proc_p = compute_token_prob(proc_s, tok_id)
                 proc_ent = compute_entropy_from_logits(proc_s)
-                proc_msp = compute_msp(proc_s)
-            else:
-                proc_lp, proc_p, proc_ent, proc_msp = 0.0, 1.0, 0.0, 1.0
+                proc_entropies.append(proc_ent)
+                tok_id = scored["tokens"][step_idx]["token_id"] if step_idx < len(scored["tokens"]) else 0
+                proc_probs.append(compute_token_prob(proc_s, tok_id))
+                proc_log_probs.append(compute_token_log_prob(proc_s, tok_id))
 
-            proc_probs.append(proc_p)
-            proc_entropies.append(proc_ent)
-            proc_log_probs.append(proc_lp)
-
-            token_records.append({
-                "step": step_idx,
-                "token_id": tok_id,
-                "token_str": tok_str,
-                "raw": {
-                    "log_prob": round(raw_lp, 4),
-                    "prob": round(raw_p, 4),
-                    "entropy": round(raw_ent, 4),
-                    "msp": round(raw_msp, 4)
-                },
-                "processed": {
-                    "log_prob": round(proc_lp, 4),
-                    "prob": round(proc_p, 4),
-                    "entropy": round(proc_ent, 4),
-                    "msp": round(proc_msp, 4)
-                }
-            })
+        adjusted_max_entropy = (
+            max(proc_entropies) if proc_entropies
+            else scored.get("adjusted_max_entropy", scored["max_entropy"])
+        )
 
         return {
             "decoder_type": decoder_type,
             "seed": seed,
-            "generated_text": generated_text,
-            "num_tokens": num_steps,
-            "tokens": token_records,
+            "generated_text": effective_text,
+            "full_generated_text": full_generated_text,
+            "draft_len": scored["draft_len"],
+            "tokens": scored["tokens"],
             "raw_summary": {
-                "min_prob": min(raw_probs) if raw_probs else 1.0,
-                "max_entropy": max(raw_entropies) if raw_entropies else 0.0,
-                "mean_nll": -float(torch.tensor(raw_log_probs).mean().item()) if raw_log_probs else 0.0
+                "min_prob": scored["min_prob"],
+                "max_entropy": scored["max_entropy"],
+                "mean_entropy": scored["mean_entropy"],
+                "mean_nll": scored["mean_nll"]
             },
             "processed_summary": {
-                "min_prob": min(proc_probs) if proc_probs else 1.0,
-                "max_entropy": max(proc_entropies) if proc_entropies else 0.0,
-                "mean_nll": -float(torch.tensor(proc_log_probs).mean().item()) if proc_log_probs else 0.0
-            }
+                "min_prob": min(proc_probs) if proc_probs else scored["min_prob"],
+                "max_entropy": round(adjusted_max_entropy, 4),
+                "mean_entropy": round(float(torch.tensor(proc_entropies).mean().item()), 4) if proc_entropies else scored["mean_entropy"],
+                "mean_nll": -float(torch.tensor(proc_log_probs).mean().item()) if proc_log_probs else scored["mean_nll"]
+            },
+            "distinct_1": scored["distinct_1"],
+            "distinct_2": scored["distinct_2"],
+            "distinct_3": scored["distinct_3"],
+            "contrastive_alpha": penalty_alpha if decoder_type == "contrastive_search" else None,
+            "contrastive_k": top_k if decoder_type == "contrastive_search" else None
         }
 
