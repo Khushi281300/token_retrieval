@@ -137,6 +137,8 @@ def run_full_pipeline_experiment(
     run_dev_only: bool = False,
     skip_dev: bool = False,
     calibrated_tau_file: Optional[str] = None,
+    num_shards: int = 1,
+    shard_idx: int = 0,
     output_dir: str = "runs"
 ):
     commit_hash = get_git_commit_hash()
@@ -468,104 +470,172 @@ def run_full_pipeline_experiment(
         return
 
     # =========================================================================
-    # PHASE 2: BASELINES EVALUATION ON TEST
+    # PHASE 2: STREAMLINED CACHED GENERATION ON TEST (Generate each element once)
     # =========================================================================
-    print(f"\n[PHASE 2] Running Baseline Evaluations on Test ({len(test_set)} questions)...")
-    baselines_results = {}
+    import math
+    if num_shards > 1:
+        shard_size = int(math.ceil(len(test_set) / num_shards))
+        start_i = shard_idx * shard_size
+        end_i = min(len(test_set), (shard_idx + 1) * shard_size)
+        active_test_set = test_set[start_i:end_i]
+        cache_suffix = f"_shard_{shard_idx}_of_{num_shards}"
+        print(f"\n[PHASE 2 & 3] Running Shard {shard_idx + 1}/{num_shards} (Questions {start_i + 1}..{end_i} of {len(test_set)})...")
+    else:
+        active_test_set = test_set
+        cache_suffix = ""
+        print(f"\n[PHASE 2 & 3] Running Streamlined Test Evaluation Across {len(test_set)} Questions...")
 
-    # 1. No-Retrieval Baseline (Closed-book Greedy)
-    print("  --> Baseline 1: No-Retrieval (Closed-Book Greedy)...")
-    no_ret_runs = []
-    for q in test_set:
-        res = pipeline.run_single_question(
-            question=q["question"],
-            ground_truths=q["answers"],
-            draft_decoder="greedy",
-            force_retrieval=False,
-            max_draft_tokens=max_draft_tokens
+    checkpoint_file = os.path.join(output_dir, f"test_cache{cache_suffix}_{commit_hash[:7]}.jsonl")
+    cached_records = {}
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, "r", encoding="utf-8") as f_chk:
+            for line in f_chk:
+                if line.strip():
+                    rec = json.loads(line)
+                    cached_records[rec["question_id"]] = rec
+        print(f"  --> Resuming: Found {len(cached_records)} pre-generated questions in {checkpoint_file}.")
+
+    f_chk_out = open(checkpoint_file, "a", encoding="utf-8")
+
+    all_test_records = []
+    for q_idx, q in enumerate(active_test_set):
+        q_id = q["id"]
+        if q_id in cached_records:
+            all_test_records.append(cached_records[q_id])
+            continue
+
+        print(f"  --> [Generating Cache] Question {q_idx + 1}/{len(active_test_set)}: {q['question'][:50]}...", end="\r", flush=True)
+
+        # 1. Retrieve top-3 passages once using question alone
+        retrieved_passages = retriever.retrieve(query=q["question"], top_k=3)
+        retrieved_text = "\n".join([p["text"] for p in retrieved_passages])
+        recall_3 = check_recall_at_k(retrieved_passages, q["answers"], k=3)
+
+        # 2. Generate ONE greedy answer conditioned on retrieved context
+        ans_prompt = f"Context:\n{retrieved_text}\n\nQuestion: {q['question']}\nAnswer:"
+        ans_greedy_res = decoder_engine.generate(
+            prompt=ans_prompt,
+            decoder_type="greedy",
+            max_new_tokens=max_answer_tokens,
+            cut_draft=True
         )
-        no_ret_runs.append(res)
-    baselines_results["no_retrieval"] = {
-        "f1": float(np.mean([r["f1"] for r in no_ret_runs])),
-        "em": float(np.mean([r["em"] for r in no_ret_runs])),
-        "retrieval_rate": 0.0
-    }
+        final_ans_retrieved = ans_greedy_res["generated_text"]
+        f1_retrieved = compute_f1(final_ans_retrieved, q["answers"])
+        em_retrieved = compute_exact_match(final_ans_retrieved, q["answers"])
+        copy_rate_greedy = compute_copy_rate(final_ans_retrieved, retrieved_text, n=3)
 
-    # 2. Always-Retrieve Baseline (100% Retrieval with Greedy Answer)
-    print("  --> Baseline 2: Always-Retrieve (100% Retrieval)...")
-    always_ret_runs = []
-    for q in test_set:
-        res = pipeline.run_single_question(
-            question=q["question"],
-            ground_truths=q["answers"],
-            draft_decoder="greedy",
-            answer_decoder="greedy",
-            force_retrieval=True,
-            max_draft_tokens=max_draft_tokens,
-            max_answer_tokens=max_answer_tokens
+        # 3. Generate ONE contrastive answer on retrieved context (for Secondary RQ1c)
+        ans_con_res = decoder_engine.generate(
+            prompt=ans_prompt,
+            decoder_type="contrastive_search",
+            penalty_alpha=0.6,
+            top_k=4,
+            max_new_tokens=max_answer_tokens,
+            cut_draft=True
         )
-        always_ret_runs.append(res)
-    baselines_results["always_retrieve"] = {
-        "f1": float(np.mean([r["f1"] for r in always_ret_runs])),
-        "em": float(np.mean([r["em"] for r in always_ret_runs])),
-        "recall_at_3": float(np.mean([r["recall_at_3"] for r in always_ret_runs])),
-        "retrieval_rate": 1.0
-    }
+        final_ans_con = ans_con_res["generated_text"]
+        f1_retrieved_con = compute_f1(final_ans_con, q["answers"])
+        em_retrieved_con = compute_exact_match(final_ans_con, q["answers"])
+        copy_rate_con = compute_copy_rate(final_ans_con, retrieved_text, n=3)
 
-    # 3. Random-Trigger Baseline (Triggered randomly at 40% rate)
-    print("  --> Baseline 3: Random-Trigger @ 40% Rate...")
-    rng_rand = random.Random(42)
-    random_ret_runs = []
-    for q in test_set:
-        fired = rng_rand.random() < primary_target_rate
-        res = pipeline.run_single_question(
-            question=q["question"],
-            ground_truths=q["answers"],
-            draft_decoder="greedy",
-            answer_decoder="greedy",
-            force_retrieval=fired,
-            max_draft_tokens=max_draft_tokens,
-            max_answer_tokens=max_answer_tokens
-        )
-        random_ret_runs.append(res)
-    baselines_results["random_trigger_40"] = {
-        "f1": float(np.mean([r["f1"] for r in random_ret_runs])),
-        "em": float(np.mean([r["em"] for r in random_ret_runs])),
-        "retrieval_rate": float(np.mean([r["retrieval_fired"] for r in random_ret_runs]))
-    }
-
-    # 4. Oracle Baseline (Gold Reference Passage supplied)
-    print("  --> Baseline 4: Oracle Mode (Gold Reference Passage)...")
-    oracle_runs = []
-    for q in test_set:
+        # 4. Generate ONE oracle answer (gold context)
         oracle_ctx = q.get("gold_passage", "")
-        res = pipeline.run_single_question(
-            question=q["question"],
-            ground_truths=q["answers"],
-            draft_decoder="greedy",
-            answer_decoder="greedy",
-            force_retrieval=True,
-            oracle_context=oracle_ctx,
-            max_draft_tokens=max_draft_tokens,
-            max_answer_tokens=max_answer_tokens
+        oracle_prompt = f"Context:\n{oracle_ctx}\n\nQuestion: {q['question']}\nAnswer:"
+        oracle_res = decoder_engine.generate(
+            prompt=oracle_prompt,
+            decoder_type="greedy",
+            max_new_tokens=max_answer_tokens,
+            cut_draft=True
         )
-        oracle_runs.append(res)
-    baselines_results["oracle"] = {
-        "f1": float(np.mean([r["f1"] for r in oracle_runs])),
-        "em": float(np.mean([r["em"] for r in oracle_runs])),
-        "retrieval_rate": 1.0
+        f1_oracle = compute_f1(oracle_res["generated_text"], q["answers"])
+        em_oracle = compute_exact_match(oracle_res["generated_text"], q["answers"])
+
+        # 5. Generate drafts for each decoder
+        draft_prompt = f"Question: {q['question']}\nDraft Answer:"
+        draft_records = {}
+
+        for dec in decoders_config:
+            dec_name = dec["name"]
+            seeds = dec["seeds"]
+            draft_records[dec_name] = []
+            for s in seeds:
+                d_res = decoder_engine.generate(
+                    prompt=draft_prompt,
+                    decoder_type=dec_name,
+                    max_new_tokens=max_draft_tokens,
+                    seed=s,
+                    cut_draft=True,
+                    **dec["kwargs"]
+                )
+                d_f1 = compute_f1(d_res["generated_text"], q["answers"])
+                d_em = compute_exact_match(d_res["generated_text"], q["answers"])
+                draft_records[dec_name].append({
+                    "seed": s,
+                    "draft_text": d_res["generated_text"],
+                    "draft_len": d_res["draft_len"],
+                    "raw_max_entropy": d_res["raw_summary"]["max_entropy"],
+                    "raw_mean_entropy": d_res["raw_summary"]["mean_entropy"],
+                    "adjusted_max_entropy": d_res["processed_summary"]["max_entropy"],
+                    "distinct_1": d_res.get("distinct_1", 1.0),
+                    "distinct_2": d_res.get("distinct_2", 1.0),
+                    "distinct_3": d_res.get("distinct_3", 1.0),
+                    "contrastive_alpha": d_res.get("contrastive_alpha"),
+                    "contrastive_k": d_res.get("contrastive_k"),
+                    "f1_draft": d_f1,
+                    "em_draft": d_em
+                })
+
+        q_record = {
+            "question_id": q_id,
+            "question": q["question"],
+            "answers": q["answers"],
+            "retrieved_passage_ids": [p.get("id", "") for p in retrieved_passages],
+            "recall_at_3": recall_3,
+            "f1_retrieved": f1_retrieved,
+            "em_retrieved": em_retrieved,
+            "copy_rate_greedy": copy_rate_greedy,
+            "f1_retrieved_con": f1_retrieved_con,
+            "em_retrieved_con": em_retrieved_con,
+            "copy_rate_con": copy_rate_con,
+            "f1_oracle": f1_oracle,
+            "em_oracle": em_oracle,
+            "drafts": draft_records
+        }
+        f_chk_out.write(json.dumps(q_record) + "\n")
+        f_chk_out.flush()
+        all_test_records.append(q_record)
+
+    f_chk_out.close()
+    print(f"\n[DONE] Cached all {len(all_test_records)} test questions.")
+
+    # =========================================================================
+    # OFFLINE TABLE COMPUTATION (Instant sub-second evaluation)
+    # =========================================================================
+    N = len(all_test_records)
+    print("\n--- COMPUTING SCIENTIFIC TABLES OFFLINE ---")
+
+    # Table 4: Baselines
+    greedy_draft_f1s = [r["drafts"]["greedy"][0]["f1_draft"] for r in all_test_records]
+    greedy_draft_ems = [r["drafts"]["greedy"][0]["em_draft"] for r in all_test_records]
+    retrieved_f1s = [r["f1_retrieved"] for r in all_test_records]
+    retrieved_ems = [r["em_retrieved"] for r in all_test_records]
+    recall_3s = [r["recall_at_3"] for r in all_test_records]
+    oracle_f1s = [r["f1_oracle"] for r in all_test_records]
+    oracle_ems = [r["em_oracle"] for r in all_test_records]
+
+    rng_rand = random.Random(42)
+    rand_triggers = [rng_rand.random() < primary_target_rate for _ in range(N)]
+    rand_f1s = [retrieved_f1s[i] if rand_triggers[i] else greedy_draft_f1s[i] for i in range(N)]
+    rand_ems = [retrieved_ems[i] if rand_triggers[i] else greedy_draft_ems[i] for i in range(N)]
+
+    baselines_results = {
+        "no_retrieval": {"f1": float(np.mean(greedy_draft_f1s)), "em": float(np.mean(greedy_draft_ems)), "retrieval_rate": 0.0},
+        "always_retrieve": {"f1": float(np.mean(retrieved_f1s)), "em": float(np.mean(retrieved_ems)), "recall_at_3": float(np.mean(recall_3s)), "retrieval_rate": 1.0},
+        "random_trigger_40": {"f1": float(np.mean(rand_f1s)), "em": float(np.mean(rand_ems)), "retrieval_rate": float(np.mean(rand_triggers))},
+        "oracle": {"f1": float(np.mean(oracle_f1s)), "em": float(np.mean(oracle_ems)), "retrieval_rate": 1.0}
     }
 
-    print(f"      No-Retrieval F1:     {baselines_results['no_retrieval']['f1']:.4f}")
-    print(f"      Always-Retrieve F1:  {baselines_results['always_retrieve']['f1']:.4f} (Recall@3: {baselines_results['always_retrieve'].get('recall_at_3', 0.0):.1%})")
-    print(f"      Random-Trigger F1:   {baselines_results['random_trigger_40']['f1']:.4f}")
-    print(f"      Oracle F1:           {baselines_results['oracle']['f1']:.4f}")
-
-    # =========================================================================
-    # PHASE 3: PRIMARY TEST EVALUATION (Answer Decoder = GREEDY strictly)
-    # Evaluates Fixed Threshold (RQ1a) and Matched Retrieval Rate (RQ1b)
-    # =========================================================================
-    print(f"\n[PHASE 3] Running Primary Test Evaluation (Answer Decoder = GREEDY strictly)...")
+    # Table 1: Fixed Threshold (RQ1a) & Table 2: Matched Rate (RQ1b)
     table1_fixed_results = {}
     table2_matched_results = {}
 
@@ -573,190 +643,149 @@ def run_full_pipeline_experiment(
         dec_name = dec["name"]
         seeds = dec["seeds"]
 
-        fixed_rate_list, fixed_f1_list, fixed_em_list = [], [], []
-        matched_rate_dict = {r: [] for r in target_rates}
-        matched_f1_dict = {r: [] for r in target_rates}
-        matched_em_dict = {r: [] for r in target_rates}
-        matched_recall_dict = {r: [] for r in target_rates}
+        seed_fixed_rates, seed_fixed_f1s, seed_fixed_ems = [], [], []
+        seed_matched_rates_dict = {r: [] for r in target_rates}
+        seed_matched_f1s_dict = {r: [] for r in target_rates}
+        seed_matched_ems_dict = {r: [] for r in target_rates}
+        seed_matched_recall_dict = {r: [] for r in target_rates}
 
-        for seed in seeds:
-            fixed_runs = []
-            matched_runs_by_rate = {r: [] for r in target_rates}
+        for s_idx, seed_val in enumerate(seeds):
+            fixed_fired_count = 0
+            fixed_f1_list, fixed_em_list = [], []
 
-            tau_m_primary = calibrated_taus[dec_name][primary_target_rate]["tau"]
+            matched_fired_counts = {r: 0 for r in target_rates}
+            matched_f1_lists = {r: [] for r in target_rates}
+            matched_em_lists = {r: [] for r in target_rates}
+            matched_recalls = {r: [] for r in target_rates}
 
-            for q_idx, q in enumerate(test_set):
-                print(f"  --> [{dec_name.upper()} | Seed {seed or 42}] Question {q_idx+1}/{len(test_set)}...", end="\r", flush=True)
-
-                # Generate draft ONCE
-                prompt = f"Question: {q['question']}\nDraft Answer:"
-                draft_res = decoder_engine.generate(
-                    prompt=prompt,
-                    decoder_type=dec_name,
-                    max_new_tokens=max_draft_tokens,
-                    seed=seed,
-                    cut_draft=True
-                )
+            for q_idx, q_rec in enumerate(all_test_records):
+                d_info = q_rec["drafts"][dec_name][s_idx]
+                ent_score = d_info["raw_max_entropy"] if use_raw else d_info["adjusted_max_entropy"]
 
                 # Fixed tau check
-                fixed_fired = pipeline.evaluate_trigger(draft_res, tau=fixed_tau_greedy, use_raw=use_raw)
+                f_fired = bool(ent_score > fixed_tau_greedy)
+                if f_fired:
+                    fixed_fired_count += 1
+                    fixed_f1_list.append(q_rec["f1_retrieved"])
+                    fixed_em_list.append(q_rec["em_retrieved"])
+                else:
+                    fixed_f1_list.append(d_info["f1_draft"])
+                    fixed_em_list.append(d_info["em_draft"])
 
-                # Matched tau check across evaluated rates
-                matched_fired_by_rate = {
-                    r: pipeline.evaluate_trigger(draft_res, tau=calibrated_taus[dec_name][r]["tau"], use_raw=use_raw)
-                    for r in target_rates
-                }
-
-                # Conditional Retrieval (using question alone as query)
-                needs_retrieval = fixed_fired or any(matched_fired_by_rate.values())
-                retrieved_passages = []
-                recall_3 = False
-                final_ans_retrieved = draft_res["generated_text"]
-                f1_retrieved = compute_f1(final_ans_retrieved, q["answers"])
-                em_retrieved = compute_exact_match(final_ans_retrieved, q["answers"])
-                copy_rate_retrieved = 0.0
-
-                if needs_retrieval:
-                    retrieved_passages = retriever.retrieve(query=q["question"], top_k=3)
-                    retrieved_text = "\n".join([p["text"] for p in retrieved_passages])
-                    recall_3 = check_recall_at_k(retrieved_passages, q["answers"], k=3)
-
-                    # Answer generated with greedy
-                    ans_prompt = f"Context:\n{retrieved_text}\n\nQuestion: {q['question']}\nAnswer:"
-                    ans_res = decoder_engine.generate(
-                        prompt=ans_prompt,
-                        decoder_type="greedy",
-                        max_new_tokens=max_answer_tokens,
-                        seed=seed,
-                        cut_draft=True
-                    )
-                    final_ans_retrieved = ans_res["generated_text"]
-                    f1_retrieved = compute_f1(final_ans_retrieved, q["answers"])
-                    em_retrieved = compute_exact_match(final_ans_retrieved, q["answers"])
-                    copy_rate_retrieved = compute_copy_rate(final_ans_retrieved, retrieved_text, n=3)
-
-                # Record Fixed-Threshold metrics
-                f1_fixed = f1_retrieved if fixed_fired else compute_f1(draft_res["generated_text"], q["answers"])
-                em_fixed = em_retrieved if fixed_fired else compute_exact_match(draft_res["generated_text"], q["answers"])
-                fixed_runs.append({"retrieval_fired": fixed_fired, "f1": f1_fixed, "em": em_fixed, "recall_at_3": recall_3 if fixed_fired else False})
-
-                # Record Matched-Rate metrics for each rate
+                # Matched tau check across rates
                 for r in target_rates:
-                    f_m = matched_fired_by_rate[r]
-                    f1_m = f1_retrieved if f_m else compute_f1(draft_res["generated_text"], q["answers"])
-                    em_m = em_retrieved if f_m else compute_exact_match(draft_res["generated_text"], q["answers"])
-                    matched_runs_by_rate[r].append({
-                        "retrieval_fired": f_m,
-                        "f1": f1_m,
-                        "em": em_m,
-                        "recall_at_3": recall_3 if f_m else False
-                    })
+                    tau_m = calibrated_taus[dec_name][r]["tau"]
+                    m_fired = bool(ent_score > tau_m)
+                    if m_fired:
+                        matched_fired_counts[r] += 1
+                        matched_f1_lists[r].append(q_rec["f1_retrieved"])
+                        matched_em_lists[r].append(q_rec["em_retrieved"])
+                        matched_recalls[r].append(q_rec["recall_at_3"])
+                    else:
+                        matched_f1_lists[r].append(d_info["f1_draft"])
+                        matched_em_lists[r].append(d_info["em_draft"])
 
                 # Write granular row to JSONL
+                primary_m_fired = bool(ent_score > calibrated_taus[dec_name][primary_target_rate]["tau"])
                 row = {
                     "git_commit_hash": commit_hash,
-                    "question_id": q["id"],
-                    "question": q["question"],
+                    "question_id": q_rec["question_id"],
+                    "question": q_rec["question"],
                     "decoder": dec_name,
-                    "seed": seed,
-                    "draft_len": draft_res["draft_len"],
-                    "draft_text": draft_res["generated_text"],
-                    "distinct_1": draft_res.get("distinct_1", 1.0),
-                    "distinct_2": draft_res.get("distinct_2", 1.0),
-                    "distinct_3": draft_res.get("distinct_3", 1.0),
-                    "contrastive_alpha": draft_res.get("contrastive_alpha"),
-                    "contrastive_k": draft_res.get("contrastive_k"),
-                    "raw_max_entropy": draft_res["raw_summary"]["max_entropy"],
-                    "raw_mean_entropy": draft_res["raw_summary"]["mean_entropy"],
-                    "adjusted_max_entropy": draft_res["processed_summary"]["max_entropy"],
+                    "seed": seed_val,
+                    "draft_len": d_info["draft_len"],
+                    "draft_text": d_info["draft_text"],
+                    "distinct_1": d_info["distinct_1"],
+                    "distinct_2": d_info["distinct_2"],
+                    "distinct_3": d_info["distinct_3"],
+                    "contrastive_alpha": d_info["contrastive_alpha"],
+                    "contrastive_k": d_info["contrastive_k"],
+                    "raw_max_entropy": d_info["raw_max_entropy"],
+                    "raw_mean_entropy": d_info["raw_mean_entropy"],
+                    "adjusted_max_entropy": d_info["adjusted_max_entropy"],
                     "tau_fixed": fixed_tau_greedy,
-                    "tau_matched_40": tau_m_primary,
-                    "fixed_retrieval_fired": fixed_fired,
-                    "matched_retrieval_fired": matched_fired_by_rate[primary_target_rate],
-                    "retrieved_passage_ids": [p.get("id", "") for p in retrieved_passages],
-                    "recall_at_3": recall_3,
-                    "final_answer": final_ans_retrieved,
-                    "f1": f1_retrieved if matched_fired_by_rate[primary_target_rate] else compute_f1(draft_res["generated_text"], q["answers"]),
-                    "em": em_retrieved if matched_fired_by_rate[primary_target_rate] else compute_exact_match(draft_res["generated_text"], q["answers"]),
-                    "copy_rate_3": copy_rate_retrieved if matched_fired_by_rate[primary_target_rate] else 0.0
+                    "tau_matched_40": calibrated_taus[dec_name][primary_target_rate]["tau"],
+                    "fixed_retrieval_fired": f_fired,
+                    "matched_retrieval_fired": primary_m_fired,
+                    "retrieved_passage_ids": q_rec["retrieved_passage_ids"],
+                    "recall_at_3": q_rec["recall_at_3"] if primary_m_fired else False,
+                    "final_answer": final_ans_retrieved if primary_m_fired else d_info["draft_text"],
+                    "f1": q_rec["f1_retrieved"] if primary_m_fired else d_info["f1_draft"],
+                    "em": q_rec["em_retrieved"] if primary_m_fired else d_info["em_draft"],
+                    "copy_rate_3": q_rec["copy_rate_greedy"] if primary_m_fired else 0.0
                 }
                 f_jsonl.write(json.dumps(row) + "\n")
 
-            print(f"  [DONE] Primary test evaluation for {dec_name.upper()} (Seed {seed or 42}).")
-
-            # Accumulate per seed
-            total_items = len(fixed_runs)
-            fixed_rate_list.append(sum(1 for r in fixed_runs if r["retrieval_fired"]) / total_items)
-            fixed_f1_list.append(np.mean([r["f1"] for r in fixed_runs]))
-            fixed_em_list.append(np.mean([r["em"] for r in fixed_runs]))
+            seed_fixed_rates.append(fixed_fired_count / N)
+            seed_fixed_f1s.append(float(np.mean(fixed_f1_list)))
+            seed_fixed_ems.append(float(np.mean(fixed_em_list)))
 
             for r in target_rates:
-                m_runs = matched_runs_by_rate[r]
-                matched_rate_dict[r].append(sum(1 for x in m_runs if x["retrieval_fired"]) / total_items)
-                matched_f1_dict[r].append(np.mean([x["f1"] for x in m_runs]))
-                matched_em_dict[r].append(np.mean([x["em"] for x in m_runs]))
-                matched_recall_dict[r].append(np.mean([x["recall_at_3"] for x in m_runs if x["retrieval_fired"]]) if any(x["retrieval_fired"] for x in m_runs) else 0.0)
+                seed_matched_rates_dict[r].append(matched_fired_counts[r] / N)
+                seed_matched_f1s_dict[r].append(float(np.mean(matched_f1_lists[r])))
+                seed_matched_ems_dict[r].append(float(np.mean(matched_em_lists[r])))
+                seed_matched_recall_dict[r].append(float(np.mean(matched_recalls[r])) if matched_recalls[r] else 0.0)
 
-        # Table 1: Fixed Reference Threshold (RQ1a)
+        # Table 1 stats
         table1_fixed_results[dec_name] = {
-            "retrieval_rate": float(np.mean(fixed_rate_list)),
-            "retrieval_rate_std": float(np.std(fixed_rate_list)),
-            "f1": float(np.mean(fixed_f1_list)),
-            "f1_std": float(np.std(fixed_f1_list)),
-            "em": float(np.mean(fixed_em_list)),
-            "em_std": float(np.std(fixed_em_list))
+            "retrieval_rate": float(np.mean(seed_fixed_rates)),
+            "retrieval_rate_std": float(np.std(seed_fixed_rates)),
+            "f1": float(np.mean(seed_fixed_f1s)),
+            "f1_std": float(np.std(seed_fixed_f1s)),
+            "em": float(np.mean(seed_fixed_ems)),
+            "em_std": float(np.std(seed_fixed_ems))
         }
 
-        # Table 2: Matched Retrieval Rate (RQ1b)
+        # Table 2 stats
         table2_matched_results[dec_name] = {
             "tau_matched": calibrated_taus[dec_name][primary_target_rate]["tau"],
             "tau_ci": [calibrated_taus[dec_name][primary_target_rate]["ci_lower"], calibrated_taus[dec_name][primary_target_rate]["ci_upper"]],
-            "retrieval_rate": float(np.mean(matched_rate_dict[primary_target_rate])),
-            "retrieval_rate_std": float(np.std(matched_rate_dict[primary_target_rate])),
-            "f1": float(np.mean(matched_f1_dict[primary_target_rate])),
-            "f1_std": float(np.std(matched_f1_dict[primary_target_rate])),
-            "em": float(np.mean(matched_em_dict[primary_target_rate])),
-            "em_std": float(np.std(matched_em_dict[primary_target_rate])),
-            "recall_at_3": float(np.mean(matched_recall_dict[primary_target_rate])),
+            "retrieval_rate": float(np.mean(seed_matched_rates_dict[primary_target_rate])),
+            "retrieval_rate_std": float(np.std(seed_matched_rates_dict[primary_target_rate])),
+            "f1": float(np.mean(seed_matched_f1s_dict[primary_target_rate])),
+            "f1_std": float(np.std(seed_matched_f1s_dict[primary_target_rate])),
+            "em": float(np.mean(seed_matched_ems_dict[primary_target_rate])),
+            "em_std": float(np.std(seed_matched_ems_dict[primary_target_rate])),
+            "recall_at_3": float(np.mean(seed_matched_recall_dict[primary_target_rate])),
             "curve_rates": {
                 f"{r:.0%}": {
                     "tau": calibrated_taus[dec_name][r]["tau"],
-                    "test_rate": float(np.mean(matched_rate_dict[r])),
-                    "f1": float(np.mean(matched_f1_dict[r])),
-                    "em": float(np.mean(matched_em_dict[r]))
+                    "test_rate": float(np.mean(seed_matched_rates_dict[r])),
+                    "f1": float(np.mean(seed_matched_f1s_dict[r])),
+                    "em": float(np.mean(seed_matched_ems_dict[r]))
                 } for r in target_rates
             }
         }
 
-    # =========================================================================
-    # PHASE 4: SECONDARY DESIGN (RQ1c - Answer Decoder Context Copy Penalty)
-    # Draft = GREEDY strictly; Answer Decoder = Greedy vs Contrastive Search
-    # =========================================================================
-    print(f"\n[PHASE 4] Running Secondary Test Evaluation (Draft = GREEDY, Answer Decoder varies)...")
+    # Table 3: Secondary Design (RQ1c - Copy Rate on triggered items under Greedy tau)
     results_answer_decoder = {}
-    for ans_dec in ["greedy", "contrastive_search"]:
-        ans_runs = []
-        for q in test_set:
-            res = pipeline.run_single_question(
-                question=q["question"],
-                ground_truths=q["answers"],
-                draft_decoder="greedy", # Strictly fixed to greedy
-                answer_decoder=ans_dec, # Varies: greedy vs contrastive
-                tau=fixed_tau_greedy,
-                use_raw=use_raw,
-                max_draft_tokens=max_draft_tokens,
-                max_answer_tokens=max_answer_tokens,
-                seed=42
-            )
-            ans_runs.append(res)
+    greedy_triggered_indices = [
+        i for i, r in enumerate(all_test_records)
+        if r["drafts"]["greedy"][0]["raw_max_entropy"] > fixed_tau_greedy
+    ]
+    if not greedy_triggered_indices:
+        greedy_triggered_indices = list(range(min(50, N)))
 
-        ret_count = sum(1 for r in ans_runs if r["retrieval_fired"])
-        results_answer_decoder[ans_dec] = {
-            "f1": float(np.mean([r["f1"] for r in ans_runs])),
-            "em": float(np.mean([r["em"] for r in ans_runs])),
-            "copy_rate_3": float(np.mean([r["copy_rate_3"] for r in ans_runs if r["retrieval_fired"]])) if ret_count > 0 else 0.0,
-            "retrieval_rate": float(ret_count / len(ans_runs))
-        }
+    f1_g_ans = [all_test_records[i]["f1_retrieved"] for i in greedy_triggered_indices]
+    em_g_ans = [all_test_records[i]["em_retrieved"] for i in greedy_triggered_indices]
+    copy_g_ans = [all_test_records[i]["copy_rate_greedy"] for i in greedy_triggered_indices]
+
+    f1_c_ans = [all_test_records[i]["f1_retrieved_con"] for i in greedy_triggered_indices]
+    em_c_ans = [all_test_records[i]["em_retrieved_con"] for i in greedy_triggered_indices]
+    copy_c_ans = [all_test_records[i]["copy_rate_con"] for i in greedy_triggered_indices]
+
+    results_answer_decoder["greedy"] = {
+        "f1": float(np.mean(f1_g_ans)),
+        "em": float(np.mean(em_g_ans)),
+        "copy_rate_3": float(np.mean(copy_g_ans)),
+        "evaluated_questions": len(greedy_triggered_indices)
+    }
+    results_answer_decoder["contrastive_search"] = {
+        "f1": float(np.mean(f1_c_ans)),
+        "em": float(np.mean(em_c_ans)),
+        "copy_rate_3": float(np.mean(copy_c_ans)),
+        "evaluated_questions": len(greedy_triggered_indices)
+    }
 
     f_jsonl.close()
 
@@ -790,7 +819,7 @@ def run_full_pipeline_experiment(
 
     print("\n" + "=" * 80)
     print("TABLE 3: ANSWER DECODER CONTEXT COPY PENALTY (RQ1c)")
-    print("Secondary Design: Draft Decoder = GREEDY strictly")
+    print(f"Secondary Design: Evaluated on {len(greedy_triggered_indices)} questions where Greedy draft triggered retrieval")
     print("=" * 80)
     print(f"{'Answer Decoder':<20} | {'Answer F1':<15} | {'Exact Match':<15} | {'Context Copy Rate (3-gram)':<25}")
     print("-" * 80)
@@ -811,13 +840,14 @@ def run_full_pipeline_experiment(
                 "timestamp": timestamp,
                 "git_commit_hash": commit_hash,
                 "model_name": model_name,
+                "compute_dtype": str(compute_dtype),
                 "score_type": score_type,
                 "entropy_unit": entropy_unit,
                 "load_in_4bit": load_in_4bit,
                 "primary_target_rate": primary_target_rate,
                 "target_rates": target_rates,
                 "num_dev_questions": len(dev_set),
-                "num_test_questions": len(test_set),
+                "num_test_questions": len(all_test_records),
                 "num_corpus_passages": len(corpus)
             },
             "dev_calibration": calibrated_taus,
@@ -849,6 +879,8 @@ if __name__ == "__main__":
     parser.add_argument("--run_dev_only", action="store_true", help="Run only Phase 1 Dev calibration and freeze thresholds before test set")
     parser.add_argument("--skip_dev", action="store_true", help="Skip Dev draft generation and load precomputed calibration")
     parser.add_argument("--calibrated_tau_file", type=str, default=None, help="Path to precomputed Dev calibration JSON")
+    parser.add_argument("--num_shards", type=int, default=1, help="Total number of GPU shards for parallel cached generation")
+    parser.add_argument("--shard_idx", type=int, default=0, help="Shard index (0-indexed)")
     parser.add_argument("--output_dir", type=str, default="runs")
     args = parser.parse_args()
 
@@ -866,5 +898,7 @@ if __name__ == "__main__":
         run_dev_only=args.run_dev_only,
         skip_dev=args.skip_dev,
         calibrated_tau_file=args.calibrated_tau_file,
+        num_shards=args.num_shards,
+        shard_idx=args.shard_idx,
         output_dir=args.output_dir
     )
