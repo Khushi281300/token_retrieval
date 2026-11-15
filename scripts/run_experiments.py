@@ -161,21 +161,19 @@ def run_full_pipeline_experiment(
     if load_in_4bit:
         try:
             from transformers import BitsAndBytesConfig
-            compute_dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
+            compute_dtype = torch.float16 if device == "cuda" else torch.float32
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=compute_dtype,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True
             )
-            print(f"Configured 4-bit quantization with BitsAndBytesConfig (compute_dtype={compute_dtype}).")
+            print(f"Configured 4-bit quantization with BitsAndBytesConfig (compute_dtype={compute_dtype} [native Turing FP16]).")
         except Exception as e:
-            print(f"Warning: BitsAndBytesConfig setup failed ({e}). Loading in standard precision.")
-            dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else (torch.float16 if device == "cuda" else torch.float32)
-            model_kwargs["torch_dtype"] = dtype
+            print(f"Warning: BitsAndBytesConfig setup failed ({e}). Loading in standard FP16.")
+            model_kwargs["torch_dtype"] = torch.float16 if device == "cuda" else torch.float32
     else:
-        dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else (torch.float16 if device == "cuda" else torch.float32)
-        model_kwargs["torch_dtype"] = dtype
+        model_kwargs["torch_dtype"] = torch.float16 if device == "cuda" else torch.float32
 
     print(f"Loading model weights for {model_name}...")
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
@@ -203,6 +201,11 @@ def run_full_pipeline_experiment(
     retriever = LocalBM25Retriever(corpus=corpus)
     pipeline = RAGPipeline(decoder_engine=decoder_engine, retriever=retriever, trigger_type="max_entropy")
     use_raw = (score_type == "raw")
+
+    total_eval_q = len(dev_set) + len(test_set)
+    passages_per_q = len(corpus) / max(1, total_eval_q)
+    print(f"\n[CORPUS NOTICE] Pooled BM25 Corpus has {len(corpus)} passages across {total_eval_q} questions (~{passages_per_q:.1f} passages/question).")
+    print(f"[CORPUS NOTICE] This is a pooled gold-in-distractor benchmark; Recall@3 is strictly evaluated to verify retrieval quality.\n")
 
     # Decoder configurations
     decoders_config = [
@@ -324,7 +327,143 @@ def run_full_pipeline_experiment(
             print(f"  * Under {dec_name:<20} scoring: Mean Max-Entropy = {np.mean(entropies):.4f}, Trigger Rate under Greedy tau = {teacher_forced_results[dec_name]['retrieval_rate_under_greedy_tau']:.1%}")
 
     if run_dev_only:
-        print("\n[INFO] --run_dev_only was requested. Freezing dev thresholds and exiting before test execution.")
+        print("\n" + "=" * 80)
+        print(f"DEV EVALUATION PASS ({len(dev_set)} questions) - Baseline Metrics & Margin Estimation")
+        print("=" * 80)
+
+        # 1. Draft properties (lengths & distinct-n) across decoders
+        dev_decoder_stats = {}
+        for dec_name, drafts in dev_drafts.items():
+            primary_drafts = drafts[:len(dev_set)]
+            lens = [d["draft_len"] for d in primary_drafts]
+            d1s = [d.get("distinct_1", 1.0) for d in primary_drafts]
+            d2s = [d.get("distinct_2", 1.0) for d in primary_drafts]
+            d3s = [d.get("distinct_3", 1.0) for d in primary_drafts]
+            dev_decoder_stats[dec_name] = {
+                "mean_draft_len": round(float(np.mean(lens)), 2),
+                "distinct_1": round(float(np.mean(d1s)), 4),
+                "distinct_2": round(float(np.mean(d2s)), 4),
+                "distinct_3": round(float(np.mean(d3s)), 4)
+            }
+
+        # 2. Baselines on Dev
+        print("  --> Running Dev Baselines (No-Retrieval, Always-Retrieve, Oracle)...")
+        dev_no_ret = []
+        dev_always_ret = []
+        dev_oracle = []
+
+        for q_idx, q in enumerate(dev_set):
+            # Dev No-retrieval (Closed-book Greedy)
+            r_no = pipeline.run_single_question(
+                question=q["question"],
+                ground_truths=q["answers"],
+                draft_decoder="greedy",
+                force_retrieval=False,
+                max_draft_tokens=max_draft_tokens
+            )
+            dev_no_ret.append(r_no)
+
+            # Dev Always-retrieve (BM25 top-3 + Greedy answer)
+            r_always = pipeline.run_single_question(
+                question=q["question"],
+                ground_truths=q["answers"],
+                draft_decoder="greedy",
+                answer_decoder="greedy",
+                force_retrieval=True,
+                max_draft_tokens=max_draft_tokens,
+                max_answer_tokens=max_answer_tokens
+            )
+            dev_always_ret.append(r_always)
+
+            # Dev Oracle (Gold passage context + Greedy answer)
+            r_oracle = pipeline.run_single_question(
+                question=q["question"],
+                ground_truths=q["answers"],
+                draft_decoder="greedy",
+                answer_decoder="greedy",
+                force_retrieval=True,
+                oracle_context=q.get("gold_passage", ""),
+                max_draft_tokens=max_draft_tokens,
+                max_answer_tokens=max_answer_tokens
+            )
+            dev_oracle.append(r_oracle)
+
+        f1_no = np.array([r["f1"] for r in dev_no_ret])
+        f1_always = np.array([r["f1"] for r in dev_always_ret])
+        em_no = np.array([r["em"] for r in dev_no_ret])
+        em_always = np.array([r["em"] for r in dev_always_ret])
+        recall_always = np.array([r["recall_at_3"] for r in dev_always_ret])
+        f1_oracle = np.array([r["f1"] for r in dev_oracle])
+        em_oracle = np.array([r["em"] for r in dev_oracle])
+
+        # Paired bootstrap difference (Always-Retrieve vs No-Retrieval on Dev)
+        delta_f1 = f1_always - f1_no
+        rng = np.random.RandomState(42)
+        boot_deltas = [float(np.mean(rng.choice(delta_f1, size=len(delta_f1), replace=True))) for _ in range(1000)]
+        ci_delta_low = float(np.percentile(boot_deltas, 2.5))
+        ci_delta_high = float(np.percentile(boot_deltas, 97.5))
+        se_f1 = float(np.std(boot_deltas))
+
+        dev_baselines = {
+            "no_retrieval": {
+                "f1": round(float(np.mean(f1_no)), 4),
+                "em": round(float(np.mean(em_no)), 4)
+            },
+            "always_retrieve": {
+                "f1": round(float(np.mean(f1_always)), 4),
+                "em": round(float(np.mean(em_always)), 4),
+                "recall_at_3": round(float(np.mean(recall_always)), 4)
+            },
+            "oracle": {
+                "f1": round(float(np.mean(f1_oracle)), 4),
+                "em": round(float(np.mean(em_oracle)), 4)
+            },
+            "retrieval_delta_f1": {
+                "mean": round(float(np.mean(delta_f1)), 4),
+                "ci_95": [round(ci_delta_low, 4), round(ci_delta_high, 4)],
+                "se_f1": round(se_f1, 4)
+            }
+        }
+
+        print("\n" + "=" * 80)
+        print("DEV BASELINE & CORPUS METRICS SUMMARY")
+        print("=" * 80)
+        print(f"Dev No-Retrieval:     F1 = {dev_baselines['no_retrieval']['f1']:.4f} | EM = {dev_baselines['no_retrieval']['em']:.4f}")
+        print(f"Dev Always-Retrieve:  F1 = {dev_baselines['always_retrieve']['f1']:.4f} | EM = {dev_baselines['always_retrieve']['em']:.4f} | Recall@3 = {dev_baselines['always_retrieve']['recall_at_3']:.1%}")
+        print(f"Dev Oracle:           F1 = {dev_baselines['oracle']['f1']:.4f} | EM = {dev_baselines['oracle']['em']:.4f}")
+        print(f"Dev Retrieval Delta:  ΔF1 = {dev_baselines['retrieval_delta_f1']['mean']:+.4f} [95% CI: {ci_delta_low:+.4f}, {ci_delta_high:+.4f}, SE = {se_f1:.4f}]")
+
+        print("\n" + "=" * 80)
+        print("DEV DRAFT GENERATION METRICS (Tokens & Repetition)")
+        print("=" * 80)
+        print(f"{'Decoder':<22} | {'Mean Length':<12} | {'Distinct-1':<12} | {'Distinct-2':<12} | {'Distinct-3'}")
+        print("-" * 80)
+        for dec_n, st in dev_decoder_stats.items():
+            print(f"{dec_n:<22} | {st['mean_draft_len']:<12.1f} | {st['distinct_1']:<12.4f} | {st['distinct_2']:<12.4f} | {st['distinct_3']:.4f}")
+
+        # Save full dev calibration summary
+        dev_summary_file = os.path.join(output_dir, f"dev_calibration_summary_{timestamp}.json")
+        with open(dev_summary_file, "w", encoding="utf-8") as f_dev:
+            json.dump({
+                "metadata": {
+                    "timestamp": timestamp,
+                    "git_commit_hash": commit_hash,
+                    "model_name": model_name,
+                    "compute_dtype": str(compute_dtype),
+                    "score_type": score_type,
+                    "entropy_unit": entropy_unit,
+                    "num_dev_questions": len(dev_set),
+                    "num_corpus_passages": len(corpus)
+                },
+                "dev_calibration": calibrated_taus,
+                "dev_cohen_kappa_vs_greedy": kappa_results,
+                "dev_teacher_forced_control": teacher_forced_results,
+                "dev_decoder_stats": dev_decoder_stats,
+                "dev_baselines": dev_baselines
+            }, f_dev, indent=2)
+
+        print(f"\n[SUCCESS] Full Dev calibration and baseline summary saved to: {dev_summary_file}")
+        print("[INFO] --run_dev_only completed. All dev statistics and margins are documented.\n")
         f_jsonl.close()
         return
 

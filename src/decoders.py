@@ -96,6 +96,7 @@ class DecoderEngine:
                 "penalty_alpha": penalty_alpha,
                 "top_k": top_k,
                 "custom_generate": "transformers-community/contrastive-search",
+                "revision": "ca11c72",
                 "trust_remote_code": True
             })
 

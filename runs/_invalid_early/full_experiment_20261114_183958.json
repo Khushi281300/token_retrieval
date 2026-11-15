@@ -1,0 +1,323 @@
+{
+  "metadata": {
+    "timestamp": "20261114_183958",
+    "git_commit_hash": "8e6e8ee4f87d539e681ffc582b954b6b551d43ac",
+    "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "score_type": "raw",
+    "entropy_unit": "nats",
+    "load_in_4bit": false,
+    "primary_target_rate": 0.4,
+    "target_rates": [
+      0.2,
+      0.4,
+      0.6
+    ],
+    "num_dev_questions": 2,
+    "num_test_questions": 3,
+    "num_corpus_passages": 5
+  },
+  "dev_calibration": {
+    "greedy": {
+      "0.2": {
+        "tau": 2.4774,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.4": {
+        "tau": 2.3272,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.6": {
+        "tau": 2.1771,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      }
+    },
+    "beam_search": {
+      "0.2": {
+        "tau": 2.4774,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.4": {
+        "tau": 2.3272,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.6": {
+        "tau": 2.1771,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      }
+    },
+    "contrastive_search": {
+      "0.2": {
+        "tau": 6.0719,
+        "ci_lower": 3.9051,
+        "ci_upper": 6.6136
+      },
+      "0.4": {
+        "tau": 5.5302,
+        "ci_lower": 3.9051,
+        "ci_upper": 6.6136
+      },
+      "0.6": {
+        "tau": 4.9885,
+        "ci_lower": 3.9051,
+        "ci_upper": 6.6136
+      }
+    },
+    "nucleus_sampling": {
+      "0.2": {
+        "tau": 2.6276,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.4": {
+        "tau": 2.6276,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      },
+      "0.6": {
+        "tau": 1.8767,
+        "ci_lower": 1.8767,
+        "ci_upper": 2.6276
+      }
+    }
+  },
+  "dev_cohen_kappa_vs_greedy": {
+    "greedy": 1.0,
+    "beam_search": 1.0,
+    "contrastive_search": -1.0,
+    "nucleus_sampling": 0.0
+  },
+  "dev_teacher_forced_control": {
+    "greedy": {
+      "mean_max_entropy": 2.2521500000000003,
+      "retrieval_rate_under_greedy_tau": 0.5
+    },
+    "beam_search": {
+      "mean_max_entropy": 2.2521500000000003,
+      "retrieval_rate_under_greedy_tau": 0.5
+    },
+    "contrastive_search": {
+      "mean_max_entropy": 2.2652,
+      "retrieval_rate_under_greedy_tau": 0.5
+    },
+    "nucleus_sampling": {
+      "mean_max_entropy": 2.2521500000000003,
+      "retrieval_rate_under_greedy_tau": 0.5
+    }
+  },
+  "table1_fixed_threshold": {
+    "greedy": {
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.5277777777777778,
+      "f1_std": 0.0,
+      "em": 0.3333333333333333,
+      "em_std": 0.0
+    },
+    "beam_search": {
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.2896825396825397,
+      "f1_std": 0.0,
+      "em": 0.0,
+      "em_std": 0.0
+    },
+    "contrastive_search": {
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.4388888888888889,
+      "f1_std": 0.0,
+      "em": 0.0,
+      "em_std": 0.0
+    },
+    "nucleus_sampling": {
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.44841269841269843,
+      "f1_std": 0.1122391716169123,
+      "em": 0.2222222222222222,
+      "em_std": 0.15713484026367722
+    }
+  },
+  "table2_matched_rate": {
+    "greedy": {
+      "tau_matched": 2.3272,
+      "tau_ci": [
+        1.8767,
+        2.6276
+      ],
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.5277777777777778,
+      "f1_std": 0.0,
+      "em": 0.3333333333333333,
+      "em_std": 0.0,
+      "recall_at_3": 1.0,
+      "curve_rates": {
+        "20%": {
+          "tau": 2.4774,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.5277777777777778,
+          "em": 0.3333333333333333
+        },
+        "40%": {
+          "tau": 2.3272,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.5277777777777778,
+          "em": 0.3333333333333333
+        },
+        "60%": {
+          "tau": 2.1771,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.5277777777777778,
+          "em": 0.3333333333333333
+        }
+      }
+    },
+    "beam_search": {
+      "tau_matched": 2.3272,
+      "tau_ci": [
+        1.8767,
+        2.6276
+      ],
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.2896825396825397,
+      "f1_std": 0.0,
+      "em": 0.0,
+      "em_std": 0.0,
+      "recall_at_3": 1.0,
+      "curve_rates": {
+        "20%": {
+          "tau": 2.4774,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.2896825396825397,
+          "em": 0.0
+        },
+        "40%": {
+          "tau": 2.3272,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.2896825396825397,
+          "em": 0.0
+        },
+        "60%": {
+          "tau": 2.1771,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.2896825396825397,
+          "em": 0.0
+        }
+      }
+    },
+    "contrastive_search": {
+      "tau_matched": 5.5302,
+      "tau_ci": [
+        3.9051,
+        6.6136
+      ],
+      "retrieval_rate": 0.0,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.35555555555555557,
+      "f1_std": 0.0,
+      "em": 0.0,
+      "em_std": 0.0,
+      "recall_at_3": 0.0,
+      "curve_rates": {
+        "20%": {
+          "tau": 6.0719,
+          "test_rate": 0.0,
+          "f1": 0.35555555555555557,
+          "em": 0.0
+        },
+        "40%": {
+          "tau": 5.5302,
+          "test_rate": 0.0,
+          "f1": 0.35555555555555557,
+          "em": 0.0
+        },
+        "60%": {
+          "tau": 4.9885,
+          "test_rate": 0.0,
+          "f1": 0.35555555555555557,
+          "em": 0.0
+        }
+      }
+    },
+    "nucleus_sampling": {
+      "tau_matched": 2.6276,
+      "tau_ci": [
+        1.8767,
+        2.6276
+      ],
+      "retrieval_rate": 0.3333333333333333,
+      "retrieval_rate_std": 0.0,
+      "f1": 0.44841269841269843,
+      "f1_std": 0.1122391716169123,
+      "em": 0.2222222222222222,
+      "em_std": 0.15713484026367722,
+      "recall_at_3": 1.0,
+      "curve_rates": {
+        "20%": {
+          "tau": 2.6276,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.44841269841269843,
+          "em": 0.2222222222222222
+        },
+        "40%": {
+          "tau": 2.6276,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.44841269841269843,
+          "em": 0.2222222222222222
+        },
+        "60%": {
+          "tau": 1.8767,
+          "test_rate": 0.3333333333333333,
+          "f1": 0.44841269841269843,
+          "em": 0.2222222222222222
+        }
+      }
+    }
+  },
+  "table3_answer_decoder": {
+    "greedy": {
+      "f1": 0.5277777777777778,
+      "em": 0.3333333333333333,
+      "copy_rate_3": 0.2,
+      "retrieval_rate": 0.3333333333333333
+    },
+    "contrastive_search": {
+      "f1": 0.4444444444444445,
+      "em": 0.3333333333333333,
+      "copy_rate_3": 0.0,
+      "retrieval_rate": 0.3333333333333333
+    }
+  },
+  "table4_baselines": {
+    "no_retrieval": {
+      "f1": 0.4444444444444445,
+      "em": 0.3333333333333333,
+      "retrieval_rate": 0.0
+    },
+    "always_retrieve": {
+      "f1": 0.5277777777777778,
+      "em": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "retrieval_rate": 1.0
+    },
+    "random_trigger_40": {
+      "f1": 0.4444444444444445,
+      "em": 0.3333333333333333,
+      "retrieval_rate": 0.6666666666666666
+    },
+    "oracle": {
+      "f1": 0.5277777777777778,
+      "em": 0.3333333333333333,
+      "retrieval_rate": 1.0
+    }
+  },
+  "jsonl_records_file": "runs\\experiment_records_20261114_183958.jsonl"
+}
