@@ -87,3 +87,40 @@
 * **Repetition Metric:** Distinct-$n$ ($n \in \{1, 2, 3\}$) on generated drafts to verify whether decoders mitigate repetition.
 * **Logging Requirement:** One JSONL record per `(question_id, decoder, seed)` recording all prompt tokens, cut draft tokens, per-token log-probs, entropies, trigger decisions, F1/EM, retrieved passage IDs, Recall@3, and git commit hash.
 * **Decision Rule:** An effect is claimed if and only if the difference at matched retrieval rate strictly exceeds the dev seed-to-seed equivalence margin in a 95% paired bootstrap test. Otherwise, it is reported as within margin (confirming threshold transferability under H1).
+
+---
+
+## 8. Calibrated Dev Thresholds & Frozen Margins
+
+**Calibration Date:** 15 November 2026  
+**Calibration Dataset:** TriviaQA `rc.wikipedia` (Dev $N=500$, random seed 42)  
+**Evaluated Model:** `allenai/OLMo-2-1124-7B-Instruct` (4-bit NF4 quantized)  
+
+### Frozen Thresholds ($\tau$ with 1,000-resample 95% Bootstrap CIs):
+
+| Decoder | Target Rate 20% | Target Rate 40% (Primary) | Target Rate 60% |
+|---|---|---|---|
+| **Greedy** | $\tau = 3.6774$ $[3.3750, 3.9903]$ | $\tau = 2.2184$ $[2.0446, 2.4330]$ | $\tau = 1.4208$ $[1.2809, 1.6062]$ |
+| **Beam Search (5)** | $\tau = 3.4156$ $[3.1666, 3.7020]$ | $\tau = 2.1174$ $[1.9548, 2.3160]$ | $\tau = 1.4547$ $[1.2943, 1.5766]$ |
+| **Contrastive Search** | $\tau = 3.5165$ $[3.1409, 3.8442]$ | $\tau = 2.1009$ $[1.9472, 2.3237]$ | $\tau = 1.3550$ $[1.2120, 1.5405]$ |
+| **Nucleus Sampling (3 seeds)** | $\tau = 3.7254$ $[3.5765, 3.9787]$ | $\tau = 2.2208$ $[2.0964, 2.3438]$ | $\tau = 1.4294$ $[1.3114, 1.5319]$ |
+
+* **Fixed Reference Threshold (tuned under Greedy @ 40%):** $\tau_{\text{fixed}} = 2.2184$
+
+### Dev Trigger Agreement (Cohen's Kappa vs Greedy @ 40% matched rate):
+- Greedy vs Beam Search: $\kappa = 0.8167$ (substantial/near-perfect agreement)
+- Greedy vs Contrastive Search: $\kappa = 0.8417$
+- Greedy vs Nucleus Sampling: $\kappa = 0.8299$
+
+### Teacher-Forced Scoring Control (Identical Greedy Drafts):
+- Greedy Scoring: Mean Max-Entropy = $2.2740$, Trigger Rate = $40.0\%$
+- Beam Search Scoring: Mean Max-Entropy = $2.2740$, Trigger Rate = $40.0\%$
+- Contrastive Search Scoring: Mean Max-Entropy = $2.4999$, Trigger Rate = $46.6\%$ ($+6.6\%$ trigger inflation solely from penalty scoring)
+- Nucleus Sampling Scoring: Mean Max-Entropy = $2.2740$, Trigger Rate = $40.0\%$
+
+### MARGINS FROZEN:
+- **Equivalence Margin for Answer F1:** $\Delta \text{F1} = 0.025$ ($2.5$ percentage points).
+  - An effect of decoding method at matched retrieval rate (RQ1b) is claimed *if and only if* $|F1_{\text{decoder}} - F1_{\text{greedy}}| > 0.025$ with $p < 0.05$ under a paired bootstrap test over the 1,000 test questions.
+  - If $|F1_{\text{decoder}} - F1_{\text{greedy}}| \le 0.025$, the difference is statistically and practically indistinguishable from greedy calibration, supporting the H1 transferability claim.
+- **Copy Rate Reduction Criterion (RQ1c):** Contrastive Search answer decoder must exhibit a statistically significant reduction in 3-gram context copy rate ($\Delta \text{CopyRate}_3 < -0.05$) relative to Greedy answer decoder.
+- **Protocol Status:** MARGINS FROZEN BEFORE TEST SET EVALUATION. Test set ($N=1,000$) to be executed strictly once.
