@@ -135,6 +135,8 @@ def run_full_pipeline_experiment(
     max_answer_tokens: int = 32,
     load_in_4bit: bool = False,
     run_dev_only: bool = False,
+    skip_dev: bool = False,
+    calibrated_tau_file: Optional[str] = None,
     output_dir: str = "runs"
 ):
     commit_hash = get_git_commit_hash()
@@ -218,79 +220,108 @@ def run_full_pipeline_experiment(
     # =========================================================================
     # PHASE 1: DEV CALIBRATION & CONTROLS
     # =========================================================================
-    print(f"\n[PHASE 1] Pre-generating Dev drafts on {len(dev_set)} questions to calibrate thresholds...")
-    dev_drafts = {}
-    calibrated_taus = {}          # {dec_name: {rate: {"tau": ..., "ci_lower": ..., "ci_upper": ...}}}
-    dev_trigger_decisions_40 = {} # {dec_name: List[bool]} for Cohen's kappa
+    if calibrated_tau_file is None and skip_dev:
+        default_cfg = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "configs", "dev_calibrated_taus.json"))
+        if os.path.exists(default_cfg):
+            calibrated_tau_file = default_cfg
 
-    for dec in decoders_config:
-        dec_name = dec["name"]
-        seeds = dec["seeds"]
-        all_seed_drafts = []
+    if calibrated_tau_file and os.path.exists(calibrated_tau_file):
+        print(f"\n[PHASE 1 SKIPPED] Loading precomputed Dev calibration from: {calibrated_tau_file}")
+        with open(calibrated_tau_file, "r", encoding="utf-8") as f_tau:
+            saved_calib = json.load(f_tau)
 
-        for s in seeds:
-            print(f"  --> Pre-generating Dev drafts for {dec_name.upper()} (Seed {s or 42})...")
-            seed_drafts = []
-            for q_idx, q in enumerate(dev_set):
-                prompt = f"Question: {q['question']}\nDraft Answer:"
-                res = decoder_engine.generate(
-                    prompt=prompt,
-                    max_new_tokens=max_draft_tokens,
-                    seed=s,
-                    cut_draft=True,
-                    **dec["kwargs"]
-                )
-                seed_drafts.append(res)
-            all_seed_drafts.extend(seed_drafts)
+        calibrated_taus = {}
+        for dec, r_dict in saved_calib["calibrated_taus"].items():
+            calibrated_taus[dec] = {}
+            for r_str, ci in r_dict.items():
+                calibrated_taus[dec][float(r_str)] = ci
 
-        dev_drafts[dec_name] = all_seed_drafts
+        fixed_tau_greedy = saved_calib.get("fixed_tau_greedy", calibrated_taus["greedy"][primary_target_rate]["tau"])
+        kappa_results = saved_calib.get("cohen_kappa_vs_greedy", {})
+        teacher_forced_results = saved_calib.get("teacher_forced_control", {})
 
-        # Calibrate tau at each target rate with 1,000 bootstrap resamples
-        calibrated_taus[dec_name] = {}
-        for rate in target_rates:
-            ci_dict = pipeline.calibrate_threshold(all_seed_drafts, target_retrieval_rate=rate, use_raw=use_raw, compute_ci=True)
-            calibrated_taus[dec_name][rate] = ci_dict
-            print(f"      tau @ {rate:.0%} = {ci_dict['tau']:.4f} [95% CI: {ci_dict['ci_lower']:.4f}, {ci_dict['ci_upper']:.4f}]")
+        print(f"--> Loaded Fixed Reference Threshold: tau_fixed = {fixed_tau_greedy:.4f}")
+        print("\n--- LOADED DEV CALIBRATION SUMMARY ---")
+        for dec in decoders_config:
+            dec_name = dec["name"]
+            tau_val = calibrated_taus[dec_name][primary_target_rate]["tau"]
+            ci_low = calibrated_taus[dec_name][primary_target_rate]["ci_lower"]
+            ci_high = calibrated_taus[dec_name][primary_target_rate]["ci_upper"]
+            print(f"  * {dec_name:<20}: tau @ 40% = {tau_val:.4f} [95% CI: {ci_low:.4f}, {ci_high:.4f}]")
+    else:
+        print(f"\n[PHASE 1] Pre-generating Dev drafts on {len(dev_set)} questions to calibrate thresholds...")
+        dev_drafts = {}
+        calibrated_taus = {}          # {dec_name: {rate: {"tau": ..., "ci_lower": ..., "ci_upper": ...}}}
+        dev_trigger_decisions_40 = {} # {dec_name: List[bool]} for Cohen's kappa
 
-        # Record binary trigger decisions at primary 40% rate for Cohen's kappa
-        primary_tau = calibrated_taus[dec_name][primary_target_rate]["tau"]
-        # Take first len(dev_set) drafts (seed 42 if multi-seed)
-        primary_dev_drafts = all_seed_drafts[:len(dev_set)]
-        decisions = [pipeline.evaluate_trigger(d, tau=primary_tau, use_raw=use_raw) for d in primary_dev_drafts]
-        dev_trigger_decisions_40[dec_name] = decisions
+        for dec in decoders_config:
+            dec_name = dec["name"]
+            seeds = dec["seeds"]
+            all_seed_drafts = []
 
-    # Fixed threshold is Greedy's tau at primary 40% target rate
-    fixed_tau_greedy = calibrated_taus["greedy"][primary_target_rate]["tau"]
-    print(f"\n--> Reference Fixed Threshold (tuned under Greedy on Dev @ {primary_target_rate:.0%}): tau_fixed = {fixed_tau_greedy:.4f}")
+            for s in seeds:
+                print(f"  --> Pre-generating Dev drafts for {dec_name.upper()} (Seed {s or 42})...")
+                seed_drafts = []
+                for q_idx, q in enumerate(dev_set):
+                    prompt = f"Question: {q['question']}\nDraft Answer:"
+                    res = decoder_engine.generate(
+                        prompt=prompt,
+                        max_new_tokens=max_draft_tokens,
+                        seed=s,
+                        cut_draft=True,
+                        **dec["kwargs"]
+                    )
+                    seed_drafts.append(res)
+                all_seed_drafts.extend(seed_drafts)
 
-    # Cohen's Kappa against Greedy on Dev at matched 40% rate
-    print("\n--- PER-QUESTION TRIGGER AGREEMENT ON DEV (Cohen's Kappa vs Greedy @ 40%) ---")
-    kappa_results = {}
-    greedy_decisions = dev_trigger_decisions_40["greedy"]
-    for dec in decoders_config:
-        dec_name = dec["name"]
-        kappa = compute_cohen_kappa(greedy_decisions, dev_trigger_decisions_40[dec_name])
-        kappa_results[dec_name] = round(kappa, 4)
-        print(f"  * Cohen's kappa (Greedy vs {dec_name:<20}): kappa = {kappa:.4f}")
+            dev_drafts[dec_name] = all_seed_drafts
 
-    # Teacher-Forced Control on Dev: Score Greedy draft under each decoder's scoring rule
-    print("\n--- TEACHER-FORCED SCORING CONTROL ON DEV ---")
-    print("Scoring the exact same Greedy draft texts under each decoder's scoring distribution...")
-    greedy_drafts = dev_drafts["greedy"]
-    teacher_forced_results = {}
-    for dec in decoders_config:
-        dec_name = dec["name"]
-        entropies = []
-        for d in greedy_drafts:
-            if dec_name == "contrastive_search":
-                entropies.append(d["processed_summary"]["max_entropy"])
-            else:
-                entropies.append(d["raw_summary"]["max_entropy"])
-        teacher_forced_results[dec_name] = {
-            "mean_max_entropy": float(np.mean(entropies)),
-            "retrieval_rate_under_greedy_tau": float(np.mean([e > fixed_tau_greedy for e in entropies]))
-        }
-        print(f"  * Under {dec_name:<20} scoring: Mean Max-Entropy = {np.mean(entropies):.4f}, Trigger Rate under Greedy tau = {teacher_forced_results[dec_name]['retrieval_rate_under_greedy_tau']:.1%}")
+            # Calibrate tau at each target rate with 1,000 bootstrap resamples
+            calibrated_taus[dec_name] = {}
+            for rate in target_rates:
+                ci_dict = pipeline.calibrate_threshold(all_seed_drafts, target_retrieval_rate=rate, use_raw=use_raw, compute_ci=True)
+                calibrated_taus[dec_name][rate] = ci_dict
+                print(f"      tau @ {rate:.0%} = {ci_dict['tau']:.4f} [95% CI: {ci_dict['ci_lower']:.4f}, {ci_dict['ci_upper']:.4f}]")
+
+            # Record binary trigger decisions at primary 40% rate for Cohen's kappa
+            primary_tau = calibrated_taus[dec_name][primary_target_rate]["tau"]
+            # Take first len(dev_set) drafts (seed 42 if multi-seed)
+            primary_dev_drafts = all_seed_drafts[:len(dev_set)]
+            decisions = [pipeline.evaluate_trigger(d, tau=primary_tau, use_raw=use_raw) for d in primary_dev_drafts]
+            dev_trigger_decisions_40[dec_name] = decisions
+
+        # Fixed threshold is Greedy's tau at primary 40% target rate
+        fixed_tau_greedy = calibrated_taus["greedy"][primary_target_rate]["tau"]
+        print(f"\n--> Reference Fixed Threshold (tuned under Greedy on Dev @ {primary_target_rate:.0%}): tau_fixed = {fixed_tau_greedy:.4f}")
+
+        # Cohen's Kappa against Greedy on Dev at matched 40% rate
+        print("\n--- PER-QUESTION TRIGGER AGREEMENT ON DEV (Cohen's Kappa vs Greedy @ 40%) ---")
+        kappa_results = {}
+        greedy_decisions = dev_trigger_decisions_40["greedy"]
+        for dec in decoders_config:
+            dec_name = dec["name"]
+            kappa = compute_cohen_kappa(greedy_decisions, dev_trigger_decisions_40[dec_name])
+            kappa_results[dec_name] = round(kappa, 4)
+            print(f"  * Cohen's kappa (Greedy vs {dec_name:<20}): kappa = {kappa:.4f}")
+
+        # Teacher-Forced Control on Dev: Score Greedy draft under each decoder's scoring rule
+        print("\n--- TEACHER-FORCED SCORING CONTROL ON DEV ---")
+        print("Scoring the exact same Greedy draft texts under each decoder's scoring distribution...")
+        greedy_drafts = dev_drafts["greedy"]
+        teacher_forced_results = {}
+        for dec in decoders_config:
+            dec_name = dec["name"]
+            entropies = []
+            for d in greedy_drafts:
+                if dec_name == "contrastive_search":
+                    entropies.append(d["processed_summary"]["max_entropy"])
+                else:
+                    entropies.append(d["raw_summary"]["max_entropy"])
+            teacher_forced_results[dec_name] = {
+                "mean_max_entropy": float(np.mean(entropies)),
+                "retrieval_rate_under_greedy_tau": float(np.mean([e > fixed_tau_greedy for e in entropies]))
+            }
+            print(f"  * Under {dec_name:<20} scoring: Mean Max-Entropy = {np.mean(entropies):.4f}, Trigger Rate under Greedy tau = {teacher_forced_results[dec_name]['retrieval_rate_under_greedy_tau']:.1%}")
 
     if run_dev_only:
         print("\n[INFO] --run_dev_only was requested. Freezing dev thresholds and exiting before test execution.")
@@ -677,6 +708,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_answer_tokens", type=int, default=32)
     parser.add_argument("--load_in_4bit", action="store_true", help="Load model in 4-bit for low VRAM (e.g. Colab T4)")
     parser.add_argument("--run_dev_only", action="store_true", help="Run only Phase 1 Dev calibration and freeze thresholds before test set")
+    parser.add_argument("--skip_dev", action="store_true", help="Skip Dev draft generation and load precomputed calibration")
+    parser.add_argument("--calibrated_tau_file", type=str, default=None, help="Path to precomputed Dev calibration JSON")
     parser.add_argument("--output_dir", type=str, default="runs")
     args = parser.parse_args()
 
@@ -692,5 +725,7 @@ if __name__ == "__main__":
         max_answer_tokens=args.max_answer_tokens,
         load_in_4bit=args.load_in_4bit,
         run_dev_only=args.run_dev_only,
+        skip_dev=args.skip_dev,
+        calibrated_tau_file=args.calibrated_tau_file,
         output_dir=args.output_dir
     )

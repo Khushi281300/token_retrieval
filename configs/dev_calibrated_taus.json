@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "model_name": "allenai/OLMo-2-1124-7B-Instruct",
+    "dataset": "trivia_qa",
+    "num_dev": 500,
+    "primary_target_rate": 0.40,
+    "evaluated_rates": [0.20, 0.40, 0.60]
+  },
+  "calibrated_taus": {
+    "greedy": {
+      "0.2": {"tau": 3.6774, "ci_lower": 3.3750, "ci_upper": 3.9903},
+      "0.4": {"tau": 2.2184, "ci_lower": 2.0446, "ci_upper": 2.4330},
+      "0.6": {"tau": 1.4208, "ci_lower": 1.2809, "ci_upper": 1.6062}
+    },
+    "beam_search": {
+      "0.2": {"tau": 3.4156, "ci_lower": 3.1666, "ci_upper": 3.7020},
+      "0.4": {"tau": 2.1174, "ci_lower": 1.9548, "ci_upper": 2.3160},
+      "0.6": {"tau": 1.4547, "ci_lower": 1.2943, "ci_upper": 1.5766}
+    },
+    "contrastive_search": {
+      "0.2": {"tau": 3.5165, "ci_lower": 3.1409, "ci_upper": 3.8442},
+      "0.4": {"tau": 2.1009, "ci_lower": 1.9472, "ci_upper": 2.3237},
+      "0.6": {"tau": 1.3550, "ci_lower": 1.2120, "ci_upper": 1.5405}
+    },
+    "nucleus_sampling": {
+      "0.2": {"tau": 3.7254, "ci_lower": 3.5765, "ci_upper": 3.9787},
+      "0.4": {"tau": 2.2208, "ci_lower": 2.0964, "ci_upper": 2.3438},
+      "0.6": {"tau": 1.4294, "ci_lower": 1.3114, "ci_upper": 1.5319}
+    }
+  },
+  "fixed_tau_greedy": 2.2184,
+  "cohen_kappa_vs_greedy": {
+    "greedy": 1.0000,
+    "beam_search": 0.8167,
+    "contrastive_search": 0.8417,
+    "nucleus_sampling": 0.8299
+  },
+  "teacher_forced_control": {
+    "greedy": {"mean_max_entropy": 2.2740, "retrieval_rate_under_greedy_tau": 0.40},
+    "beam_search": {"mean_max_entropy": 2.2740, "retrieval_rate_under_greedy_tau": 0.40},
+    "contrastive_search": {"mean_max_entropy": 2.4999, "retrieval_rate_under_greedy_tau": 0.466},
+    "nucleus_sampling": {"mean_max_entropy": 2.2740, "retrieval_rate_under_greedy_tau": 0.40}
+  }
+}
